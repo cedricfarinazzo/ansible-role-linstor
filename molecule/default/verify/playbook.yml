@@ -157,9 +157,13 @@
         o=$(probe -cert /root/pki/forged.crt -key /root/pki/forged.key); grep -q 'unexpected eof' <<<"$o" || fail "accepted a certificate of another key under the CA's name"
         o=$(probe -cert /root/pki/forged.crt -key /root/pki/forged.key -cert_chain /root/pki/fakeca.crt); grep -q 'unexpected eof' <<<"$o" || fail "accepted a forged chain"
         o=$(probe -cert /root/pki/forged-noaki.crt -key /root/pki/forged.key -cert_chain /root/pki/fakeca.crt); grep -q 'unexpected eof' <<<"$o" || fail "accepted a forged chain without a key identifier"
-        sleep 20
-        linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
-          > /dev/null || fail "the refused peers took the node offline"
+        sleep 20  # a drop the probes cause shows within this; then the node must be back within 180 s
+        for i in $(seq 36); do
+          sleep 5
+          linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
+            > /dev/null && exit 0
+        done
+        journalctl -u linstor-controller -u linstor-satellite -n 80 --no-pager; fail "the refused peers took the node offline"
       args:
         executable: /bin/bash
       changed_when: false

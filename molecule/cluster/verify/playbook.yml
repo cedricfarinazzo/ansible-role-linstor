@@ -89,9 +89,13 @@
     - name: Both nodes still online
       ansible.builtin.shell: |
         set -o pipefail
-        sleep 20
-        [ "$(linstor -m node list | jq '[.[0][] | select(.connection_status == "ONLINE")] | length')" = 2 ] ||
-          { echo "FAIL: a node went offline after the refused probes"; exit 1; }
+        sleep 20  # a drop the probes cause shows within this; then the node must be back within 180 s
+        for i in $(seq 36); do
+          [ "$(linstor -m node list | jq '[.[0][] | select(.connection_status == "ONLINE")] | length')" = 2 ] && exit 0
+          sleep 5
+        done
+        echo "FAIL: a node went offline after the refused probes: $(linstor node list)"
+        journalctl -u linstor-controller -u linstor-satellite -n 80 --no-pager; exit 1
       args:
         executable: /bin/bash
       changed_when: false

@@ -149,7 +149,7 @@ From a running cluster whose controller is on node-a, with node-b also controlle
    cp -a /var/lib/linstor.orig/. /var/lib/linstor/
    umount /var/lib/linstor && drbdadm secondary linstor_db
    ```
-4. Set `linstor_controller_ha: true` on every node and `linstor_controller: true` on node-b, then run the role on every node: drbd-reactor on node-a and node-b promotes `linstor_db` on one, mounts it and starts the controller there. drbd-reactor owns the controller from then on: where it cannot promote, it stops a controller that runs, so never turn HA on before step 3. `drbd-reactorctl status linstor_db`, `linstor node list` from both.
+4. Set `linstor_controller_ha: true` on every node and `linstor_controller: true` on node-b, then run the role on every node: drbd-reactor on node-a and node-b promotes `linstor_db` on one, mounts it and starts the controller there. drbd-reactor owns the controller from then on: where it cannot promote, it stops a controller that runs, so never turn HA on before step 3. The role reads which node runs the controller right after drbd-reactor starts, so on that first run the connector and cluster-object tasks skip on every node: once the controller is up (`drbd-reactorctl status linstor_db`), run the role once more. `linstor node list` from both.
 5. Check a failover: `drbd-reactorctl evict linstor_db` on the active node; the controller comes up on the other, the nodes go Online again. Then remove `/var/lib/linstor.orig`.
 
 Back to one controller: `drbd-reactorctl disable --now linstor_db` on the standby nodes, `linstor_controller_ha: false` and `linstor_controller: false` on them, rerun; the active node keeps the database on DRBD until you copy it back.
@@ -350,7 +350,7 @@ curl -s --cacert ca.crt https://node-a:3371/v1/controller/version   # refused: n
 
 ## ↩️ Rollback
 
-`linstor_state: absent` stops and purges the LINSTOR packages (and `linstor_packages_extra`; drbd-reactor too with `linstor_controller_ha`) and removes the role's files: `/etc/linstor/ssl`, the TOML files, the client configuration, the HA mount unit, promoter and satellite drop-in. The database and satellite state under `/var/lib/linstor` stay unless `linstor_remove_data: true`. Your PEM files are never touched.
+`linstor_state: absent` stops and purges the LINSTOR packages (and `linstor_packages_extra`; drbd-reactor too with `linstor_controller_ha`) and removes the role's files: `/etc/linstor/ssl`, the TOML files, the client configuration, the HA mount unit, promoter and satellite drop-in. The database and satellite state under `/var/lib/linstor` stay unless `linstor_remove_data: true`. Your PEM files are never touched. Turning `linstor_controller_ha` off without `absent` leaves the promoter (`/etc/drbd-reactor.d/<resource>.toml`) and the mount unit in place: drbd-reactor keeps managing the controller until you stop drbd-reactor and remove the promoter yourself, then move the database back (step 3 in reverse) before running the role with HA off.
 
 ## 🧪 Testing
 
