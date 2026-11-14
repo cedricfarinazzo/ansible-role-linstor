@@ -2,7 +2,7 @@
 # Runs the Molecule scenario on one or more distributions; several run in parallel, one log each.
 set -uo pipefail
 
-SUPPORTED="debian12 debian13 ubuntu2404 ubuntu2604"
+SUPPORTED="debian13 ubuntu2404 ubuntu2604"
 SCENARIO=default
 
 show_usage() {

@@ -18,6 +18,13 @@
         name: cedricfarinazzo.drbd
         tasks_from: repo.yml
 
+    # Minimal images drop /usr/share/man: the JRE's postinst then fails on its man page link
+    - name: Man page directory for the JRE's alternatives
+      ansible.builtin.file:
+        path: /usr/share/man/man1
+        state: directory
+        mode: "0755"
+
     - name: Directory of the file-backed pool
       ansible.builtin.file:
         path: /srv/linstor-pool

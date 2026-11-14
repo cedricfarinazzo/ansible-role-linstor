@@ -74,6 +74,7 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 - A second TLS peer with a valid certificate on a satellite (an `openssl s_client` of the CA) takes the satellite from its controller: the node stays OFFLINE until the satellite restarts. The tests prove an accepted peer by the controller's own SSL session, never by a probe.
 - DRBD options are stored in DRBD's base units: `c-max-rate` in KiB/s (`70M` = `71680`); LINSTOR rejects `70M` in a property.
 - A storage pool's driver pool is `StorDriver/StorPoolName` for every provider (LINSTOR shows `/srv/pool` for a file pool).
+- Minimal container images drop `/usr/share/man`: the JRE's postinst fails on its man page alternative (Ubuntu). The scenarios' prepare makes `/usr/share/man/man1`.
 - A container has no LVM, ZFS or DRBD module: the scenarios use file-thin pools and never spawn a resource.
 - Ansible's `sequence` test is true for a mapping: list inputs are also asserted `is not mapping`.
 - Molecule's `galaxy` dependency installs roles into `~/.ansible/roles` and fails on the second run: the scenarios use a `shell` dependency into the ephemeral directory.

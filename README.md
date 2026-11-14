@@ -45,8 +45,12 @@ Each is tested in CI with Molecule: a combined node over mutual TLS, a rerun for
 
 | Distribution | Versions | LINSTOR source tested |
 |--------------|----------|-----------------------|
-| **Debian** | 12, 13 | LINBIT's `proxmox-8` / `proxmox-9` suites, as `cedricfarinazzo.drbd` adds them |
+| **Debian** | 13 | LINBIT's `proxmox-9` suite, as `cedricfarinazzo.drbd` adds it |
 | **Ubuntu** | 24.04, 26.04 | LINBIT's PPA `linbit/linbit-drbd9-stack`, as `cedricfarinazzo.drbd` adds it |
+
+#### Platform notes
+
+- **Debian 12:** not supported. LINBIT's `proxmox-8` suite ships LINSTOR 1.33, whose controller leaves its SSL connector off when it is set as this role sets it: SSL nodes never come online.
 
 #### Why no source of its own
 

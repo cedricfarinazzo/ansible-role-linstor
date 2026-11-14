@@ -1,5 +1,5 @@
 # Define supported distributions
-SUPPORTED_DISTROS := debian12 debian13 ubuntu2404 ubuntu2604
+SUPPORTED_DISTROS := debian13 ubuntu2404 ubuntu2604
 DEFAULT_DISTRO := debian13
 
 .PHONY: molecule-test molecule-test-all molecule-test-failure molecule-test-cluster lint help check-prereqs test
