@@ -36,7 +36,7 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 - **No package source of its own:** LINSTOR comes from the sources already configured; a second source for LINBIT's repository with another `Signed-By` conflicts in APT.
 - **No PKI in the role:** it reads the user's PEM files and never moves, rewrites or copies a private key off the host.
 - **Bad certificates stop the role before any package or LINSTOR file**; every input is asserted before any change.
-- **A secret never reaches the output:** tasks that read or send the store password are `no_log`; the password reaches shell tasks by environment, never in the command line.
+- **A secret never reaches the output:** tasks that read or send the store password are `no_log`; the password reaches shell tasks by environment, never in the command line; the templates holding it are `diff: false`.
 - **Cluster objects are added and updated, never deleted.**
 - **Examples never copy a real deployment:** README and Molecule values use `example.com` names, made-up hosts and documentation addresses.
 - **GitHub Actions pinned by full commit SHA**, tag in a trailing comment.
