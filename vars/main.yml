@@ -24,6 +24,9 @@ linstor_all_packages:
   - linstor-satellite
   - linstor-controller
   - linstor-client
+# Packages whose postinst starts a LINSTOR service: masked until the role's configuration is written
+linstor_service_packages: >-
+  {{ (['linstor-satellite'] if linstor_satellite else []) + (['linstor-controller'] if linstor_controller else []) }}
 # Under HA drbd-reactor, not the role, starts the controller: it is never enabled nor started as a plain service
 linstor_ha_controller: "{{ linstor_controller_ha and linstor_controller }}"
 linstor_services: >-

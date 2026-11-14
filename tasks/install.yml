@@ -25,6 +25,26 @@
       {{ linstor_policy.stdout | regex_findall('(?m)^(\S+):\n\s+Installed: .*\n\s+Candidate: (?!\(none\))') }}
     linstor_missing: "{{ linstor_packages | difference(linstor_known) }}"
 
+# A postinst starts its new service at once with the package's defaults: the controller's writes a linstor.toml with
+# H2 user "linstor", creates the database with it and serves plain HTTP on every address. Masked for this boot until
+# config.yml lifts the mask, so the first start has the role's files
+- name: Read which LINSTOR services are installed
+  ansible.builtin.command: >-
+    dpkg-query -W -f '${Package} ${db:Status-Status}\n' {{ linstor_service_packages | join(' ') }}
+  register: linstor_dpkg
+  # 1 for a package dpkg never saw
+  failed_when: linstor_dpkg.rc not in [0, 1]
+  changed_when: false
+  check_mode: false
+  when: linstor_service_packages | length > 0
+
+- name: New LINSTOR services stay stopped until the role's configuration is in place  # noqa: command-instead-of-module (mask --runtime: no module has it)
+  ansible.builtin.command: systemctl mask --runtime {{ item }}.service
+  loop: >-
+    {{ linstor_service_packages
+       | difference(linstor_dpkg.stdout | default('') | regex_findall('(?m)^(\S+) installed$')) }}
+  changed_when: true
+
 - name: LINSTOR packages are installed
   ansible.builtin.apt:
     name: "{{ linstor_packages }}"

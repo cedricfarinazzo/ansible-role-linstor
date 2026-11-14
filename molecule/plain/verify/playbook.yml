@@ -1,6 +1,25 @@
 ---
 # Without linstor_tls: nothing of the TLS path is built, the plain listeners are the ones that serve.
 # Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: The package never started LINSTOR with its own defaults
+  hosts: all
+  gather_facts: false
+  tasks:
+    # Recorded by prepare's drop-in; the controller's first start creates its database with the file it finds
+    - name: Every LINSTOR start had the role's configuration
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for u in linstor-controller linstor-satellite; do
+          dpkg-query -W -f '${Status}' $u 2>/dev/null | grep -q 'ok installed' || continue
+          f=/run/molecule-$u-starts
+          [ -s $f ] || fail "$u never started"
+          if grep -vx role $f; then fail "$u started without the role's file: $(tr '\n' ' ' < $f)"; fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
 - name: Verify
   hosts: all
   gather_facts: false
