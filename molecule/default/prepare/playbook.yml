@@ -1,0 +1,59 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Update the package cache
+      ansible.builtin.apt:
+        name:
+          - openssl
+          - curl
+          - iproute2
+          - jq
+        update_cache: true
+        cache_valid_time: 3600
+
+    # Only the source and key part of the DRBD role: no module build in a container
+    - name: LINBIT source, its key checked against the pinned fingerprint
+      ansible.builtin.include_role:
+        name: cedricfarinazzo.drbd
+        tasks_from: repo.yml
+
+    # Minimal images drop /usr/share/man: the JRE's postinst then fails on its man page link
+    - name: Man page directory for the JRE's alternatives
+      ansible.builtin.file:
+        path: /usr/share/man/man1
+        state: directory
+        mode: "0755"
+
+    - name: Directory of the file-backed pool
+      ansible.builtin.file:
+        path: /srv/linstor-pool
+        state: directory
+        mode: "0700"
+
+    # A test CA, the node's certificate (server and client), a second node's certificate of the same CA (peer), a
+    # rogue one from another CA and forged ones: from another key under the CA's own name, with and without an
+    # authority key identifier
+    - name: Make the test certificates
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mkdir -p /root/pki && cd /root/pki
+        ec="-newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes"
+        openssl req -x509 $ec -keyout ca.key -out ca.crt -days 30 -subj "/CN=Test CA" \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+        openssl req $ec -keyout node.key -out node.csr -subj "/CN=linstor-node"
+        printf 'subjectAltName=DNS:linstor-node,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' > ext
+        openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 30 -extfile ext
+        openssl req $ec -keyout peer.key -out peer.csr -subj "/CN=peer"
+        openssl x509 -req -in peer.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out peer.crt -days 30 -extfile ext
+        openssl req -x509 $ec -keyout rogue.key -out rogue.crt -days 30 -subj "/CN=rogue" -addext subjectAltName=DNS:localhost
+        openssl req -x509 $ec -keyout fakeca.key -out fakeca.crt -days 30 -subj "/CN=Test CA" \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+        openssl req $ec -keyout forged.key -out forged.csr -subj "/CN=linstor-node"
+        openssl x509 -req -in forged.csr -CA fakeca.crt -CAkey fakeca.key -CAcreateserial -out forged.crt -days 30 -extfile ext
+        grep -v authorityKeyIdentifier ext > ext-noaki
+        openssl x509 -req -in forged.csr -CA fakeca.crt -CAkey fakeca.key -CAcreateserial -out forged-noaki.crt -days 30 -extfile ext-noaki
+        chmod 0600 ./*.key
+      args:
+        executable: /bin/bash
+        creates: /root/pki/node.crt

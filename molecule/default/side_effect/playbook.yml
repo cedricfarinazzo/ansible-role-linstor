@@ -1,0 +1,129 @@
+---
+# Before the renewal and absent. A run under --diff that changes a line beside the passwords never shows the store
+# password. Without the controller pin, a valid certificate of the CA takes the satellite from its controller: the
+# pin is what stops it.
+- name: Run the role again from the control node, as a user would
+  hosts: all
+  gather_facts: false
+  vars:
+    molecule_run: >-
+      ansible-playbook -i "{{ inventory_dir }}" "{{ playbook_dir }}/../converge/playbook.yml"
+  tasks:
+    - name: Read the store password
+      ansible.builtin.slurp:
+        src: /etc/linstor/ssl/store.password
+      register: molecule_password
+      no_log: true
+
+    - name: A run that changes both TOML files next to their passwords, under --diff, never prints the store password
+      ansible.builtin.shell: |
+        set -o pipefail
+        out=$({{ molecule_run }} --diff -e linstor_tls_protocol=TLSv1.2 -e linstor_controller_http_listen=127.0.0.2 2>&1) ||
+          { echo "FAIL: the run failed"; exit 1; }
+        grep -qE 'changed=[1-9]' <<<"$out" || { echo "FAIL: the run changed nothing, the test proves nothing"; exit 1; }
+        if grep -qF "$P" <<<"$out"; then echo "FAIL: the store password is in the --diff output"; exit 1; fi
+      args:
+        executable: /bin/bash
+      environment:
+        P: "{{ molecule_password.content | b64decode | trim }}"
+      delegate_to: localhost
+      no_log: true
+      changed_when: false
+
+    - name: A run without the controller pin, from the control node
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} -e '{"linstor_tls_controller_certs": []}' > "{{ inventory_dir }}/../unpinned.log" 2>&1 ||
+          { tail -25 "{{ inventory_dir }}/../unpinned.log"; echo "FAIL: the unpinned run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Without the controller pin, a valid certificate of the CA takes the satellite from its controller
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for i in $(seq 20); do
+          linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' > /dev/null && break
+          sleep 3
+        done
+        o=$( (sleep 5) | timeout 12 openssl s_client -connect 127.0.0.1:3367 -CAfile /root/pki/ca.crt \
+          -cert /root/pki/peer.crt -key /root/pki/peer.key -cert_chain /root/pki/ca.crt 2>&1)
+        if grep -q 'unexpected eof' <<<"$o"; then fail "the unpinned satellite refused the peer: the pin proves nothing"; fi
+        for i in $(seq 20); do
+          linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status != "ONLINE")' > /dev/null && exit 0
+          sleep 3
+        done
+        fail "the peer did not take the unpinned satellite from its controller"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+# A renewed certificate rebuilds the stores and the node comes back over SSL. The satellite pins the old and the new
+# certificate, the overlap a multi-host renewal needs. Then state absent removes everything the role added.
+- name: Renew the node certificate
+  hosts: all
+  pre_tasks:
+    - name: Sign a new certificate for the same key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /root/pki
+        cp node.crt node.old.crt
+        openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 60 -extfile ext
+        sha256sum node.crt > renewed.sha256
+      args:
+        executable: /bin/bash
+      changed_when: true
+  roles:
+    - role: ../../../../ansible-role-linstor
+      vars:
+        linstor_tls_controller_certs:
+          - /root/pki/node.old.crt
+          - /root/pki/node.crt
+  post_tasks:
+    - name: The key store and the satellite trust store hold the renewed certificate and the node is online over SSL
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        p=$(cat /etc/linstor/ssl/store.password)
+        f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/node.crt | cut -d= -f2)
+        keytool -list -keystore /etc/linstor/ssl/keystore.jks -storepass "$p" | grep -q "$f" || fail "old certificate kept"
+        t=$(keytool -list -keystore /etc/linstor/ssl/satellite-trust.jks -storepass "$p") || fail "satellite trust store unreadable"
+        grep -q "$f" <<<"$t" || fail "the satellite does not pin the renewed certificate"
+        o=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/node.old.crt | cut -d= -f2)
+        grep -q "$o" <<<"$t" || fail "the satellite dropped the old certificate during the overlap"
+        [ "$(grep -c trustedCertEntry <<<"$t")" = 4 ] || fail "satellite trust store: $t"
+        for i in $(seq 30); do
+          linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
+            > /dev/null && exit 0
+          sleep 3
+        done
+        fail "node not online after the renewal"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Remove LINSTOR
+  hosts: all
+  roles:
+    - role: ../../../../ansible-role-linstor
+      vars:
+        linstor_state: absent
+        linstor_remove_data: true
+  post_tasks:
+    - name: Nothing the role added remains
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for f in /etc/linstor/ssl /etc/linstor/linstor.toml /etc/linstor/linstor_satellite.toml \
+          /etc/linstor/linstor-client.conf /var/lib/linstor; do
+          if [ -e "$f" ]; then fail "$f remains"; fi
+        done
+        for p in linstor-satellite linstor-controller linstor-client drbd-reactor; do
+          if dpkg-query -W -f '${Status}' $p 2>/dev/null | grep -q 'ok installed'; then fail "$p installed"; fi
+        done
+        if ss -Htln | grep -qE ':33(66|67|70|71) '; then fail "a LINSTOR port still listens"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false

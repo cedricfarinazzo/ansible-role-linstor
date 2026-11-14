@@ -1,0 +1,28 @@
+---
+# No LINBIT source here: the last case finds no LINSTOR package.
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: OpenSSL is installed
+      ansible.builtin.apt:
+        name: openssl
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: A test CA, its node certificate, an expired one, a key of another pair and a certificate of another CA
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mkdir -p /root/pki && cd /root/pki
+        ec="-newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes"
+        openssl req -x509 $ec -keyout ca.key -out ca.crt -days 30 -subj "/CN=Test CA" \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+        openssl req $ec -keyout node.key -out node.csr -subj "/CN=linstor-failure"
+        openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 30
+        # Expired: valid in 2020 only (-not_before/-not_after, OpenSSL 3.4+)
+        openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -out expired.crt \
+          -not_before 20200101000000Z -not_after 20200201000000Z
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out other.key
+        openssl req -x509 $ec -keyout rogue.key -out rogue.crt -days 30 -subj "/CN=rogue"
+      args:
+        executable: /bin/bash
+        creates: /root/pki/node.crt

@@ -1,0 +1,42 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  # Name carries the distribution, so several distributions run side by side
+  - name: linstor-failure-${MOLECULE_DISTRO:-debian13}
+    hostname: linstor-failure
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: prepare/playbook.yml
+    converge: converge/playbook.yml
+    verify: verify/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+        linstor_tls: true
+        linstor_tls_cert: /root/pki/node.crt
+        linstor_tls_key: /root/pki/node.key
+        linstor_tls_ca: /root/pki/ca.crt
+verifier:
+  name: ansible
+scenario:
+  name: failure
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

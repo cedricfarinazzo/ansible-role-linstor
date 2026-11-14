@@ -1,0 +1,31 @@
+---
+# No source of its own: LINSTOR comes from the sources already configured (LINBIT's, a mirror, Proxmox VE).
+- name: Refresh the package lists
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Read the package candidates
+  ansible.builtin.command: apt-cache policy {{ linstor_packages | join(' ') }}
+  register: linstor_policy
+  changed_when: false
+  check_mode: false
+
+- name: Every package has a source
+  ansible.builtin.assert:
+    that:
+      - linstor_missing | length == 0
+    fail_msg: >-
+      No configured APT source provides {{ linstor_missing | join(', ') }}. Add LINBIT's repository first (for example
+      with the cedricfarinazzo.drbd role, whose LINBIT source carries LINSTOR) or your mirror.
+    quiet: true
+  vars:
+    # "apt-cache policy" prints "Candidate: (none)" or nothing for an unknown package
+    linstor_known: >-
+      {{ linstor_policy.stdout | regex_findall('(?m)^(\S+):\n\s+Installed: .*\n\s+Candidate: (?!\(none\))') }}
+    linstor_missing: "{{ linstor_packages | difference(linstor_known) }}"
+
+- name: LINSTOR packages are installed
+  ansible.builtin.apt:
+    name: "{{ linstor_packages }}"
+    state: present

@@ -1,0 +1,37 @@
+---
+# Each case must fail before any LINSTOR file or package; its rescue records the message, which verify checks.
+- name: Converge
+  hosts: all
+  tasks:
+    - name: Each case fails
+      ansible.builtin.include_tasks: case.yml
+      loop:
+        - name: missing
+          vars:
+            linstor_tls_cert: /root/pki/missing.crt
+        - name: mismatch
+          vars:
+            linstor_tls_key: /root/pki/other.key
+        - name: other-ca
+          vars:
+            linstor_tls_cert: /root/pki/rogue.crt
+            linstor_tls_key: /root/pki/rogue.key
+        - name: expired
+          vars:
+            linstor_tls_cert: /root/pki/expired.crt
+        - name: pin-missing
+          vars:
+            linstor_tls_controller_certs:
+              - /root/pki/missing.crt
+        - name: pin-other-ca
+          vars:
+            linstor_tls_controller_certs:
+              - /root/pki/rogue.crt
+        - name: pin-expired
+          vars:
+            linstor_tls_controller_certs:
+              - /root/pki/expired.crt
+        - name: no-source
+          vars: {}
+      loop_control:
+        loop_var: molecule_case

@@ -1,0 +1,28 @@
+---
+- name: Validate inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: LINSTOR
+  when: linstor_state == 'present'
+  block:
+    - name: Certificates
+      ansible.builtin.include_tasks: certs.yml
+      when: linstor_tls
+
+    - name: Packages
+      ansible.builtin.include_tasks: install.yml
+
+    - name: Key and trust stores
+      ansible.builtin.include_tasks: stores.yml
+      when: linstor_tls and (linstor_satellite or linstor_controller)
+
+    - name: Configuration and services
+      ansible.builtin.include_tasks: config.yml
+
+    - name: Cluster objects
+      ansible.builtin.include_tasks: cluster.yml
+      when: linstor_cluster
+
+- name: Remove LINSTOR
+  ansible.builtin.include_tasks: absent.yml
+  when: linstor_state == 'absent'

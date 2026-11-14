@@ -1,0 +1,202 @@
+---
+# Nodes, storage pools and resource groups through the controller's REST API: read, then create or update what
+# differs. Nothing is ever deleted. Also runnable alone: include_role tasks_from cluster.yml.
+- name: Cluster objects
+  module_defaults:
+    ansible.builtin.uri:
+      client_cert: "{{ linstor_tls_cert if linstor_tls else None }}"
+      client_key: "{{ linstor_tls_key if linstor_tls else None }}"
+      ca_path: "{{ linstor_tls_ca if linstor_tls else None }}"
+      body_format: json
+      status_code:
+        - 200
+        - 201
+      timeout: 60
+  block:
+    - name: Wait for the controller API
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/controller/version"
+      register: linstor_cluster_api
+      until: linstor_cluster_api.status | default(0) == 200
+      retries: "{{ 1 if ansible_check_mode else linstor_wait_retries }}"
+      delay: 5
+      check_mode: false
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Read the nodes
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/nodes"
+      register: linstor_nodes_read
+      check_mode: false
+      when: linstor_cluster_api is succeeded
+
+    - name: Nodes are registered
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/nodes"
+        method: POST
+        body:
+          name: "{{ item.name }}"
+          type: "{{ linstor_node_types[item.type | default('satellite')] }}"
+          net_interfaces:
+            - "{{ linstor_node_netif }}"
+      changed_when: true
+      loop: "{{ linstor_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.name not in linstor_nodes_read.json | map(attribute='name')
+
+    - name: Node addresses, ports and encryption are as listed
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/nodes/{{ item.name }}/net-interfaces/default"
+        method: PUT
+        body: "{{ linstor_node_netif }}"
+      changed_when: true
+      loop: "{{ linstor_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.name in linstor_nodes_read.json | map(attribute='name')
+        - linstor_current_netif != linstor_node_netif
+      vars:
+        linstor_current: >-
+          {{ (linstor_nodes_read.json | selectattr('name', 'equalto', item.name) | first).net_interfaces
+             | selectattr('name', 'equalto', 'default') | first | default({}) }}
+        linstor_current_netif:
+          name: default
+          address: "{{ linstor_current.address | default('') }}"
+          satellite_port: "{{ linstor_current.satellite_port | default(0) | int }}"
+          satellite_encryption_type: "{{ linstor_current.satellite_encryption_type | default('') | upper }}"
+
+    # Storage pools need their satellite connected
+    - name: Wait for the nodes holding storage pools to come online
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/nodes/{{ item }}"
+      register: linstor_node_state
+      until: linstor_node_state.json.connection_status | default('') == 'ONLINE'
+      retries: "{{ linstor_wait_retries }}"
+      delay: 5
+      check_mode: false
+      loop: "{{ linstor_storage_pools | map(attribute='node') | unique }}"
+      when: linstor_cluster_api is succeeded and not ansible_check_mode
+
+    - name: Read the storage pools
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/view/storage-pools"
+      register: linstor_pools_read
+      check_mode: false
+      when: linstor_cluster_api is succeeded
+
+    - name: Storage pools exist
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/nodes/{{ item.node }}/storage-pools"
+        method: POST
+        body:
+          storage_pool_name: "{{ item.name }}"
+          provider_kind: "{{ item.provider | upper }}"
+          props: >-
+            {{ ({'StorDriver/StorPoolName': item.pool} if item.pool is defined else {})
+               | combine(item.properties | default({})) }}
+      changed_when: true
+      loop: "{{ linstor_storage_pools }}"
+      loop_control:
+        label: "{{ item.node }}/{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - linstor_pools_read.json | selectattr('node_name', 'equalto', item.node)
+          | selectattr('storage_pool_name', 'equalto', item.name) | list | length == 0
+
+    # The driver and its pool are fixed at creation; only properties can change on an existing pool
+    - name: Existing storage pools match their provider and pool
+      ansible.builtin.assert:
+        that:
+          - linstor_pool.provider_kind == item.provider | upper
+          - item.pool is not defined or linstor_pool.props['StorDriver/StorPoolName'] | default('') == item.pool
+        fail_msg: >-
+          {{ item.node }}/{{ item.name }} exists as {{ linstor_pool.provider_kind }}
+          {{ linstor_pool.props['StorDriver/StorPoolName'] | default('') }}, listed as {{ item.provider | upper }}
+          {{ item.pool | default('') }}: LINSTOR cannot change it in place; delete and recreate it yourself
+        quiet: true
+      loop: "{{ linstor_storage_pools }}"
+      loop_control:
+        label: "{{ item.node }}/{{ item.name }}"
+      when: linstor_cluster_api is succeeded and linstor_pool | length > 0
+      vars:
+        linstor_pool: >-
+          {{ linstor_pools_read.json | selectattr('node_name', 'equalto', item.node)
+             | selectattr('storage_pool_name', 'equalto', item.name) | first | default({}) }}
+
+    - name: Storage pool properties are set
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/nodes/{{ item.node }}/storage-pools/{{ item.name }}"
+        method: PUT
+        body:
+          override_props: "{{ linstor_want }}"
+      changed_when: true
+      loop: "{{ linstor_storage_pools }}"
+      loop_control:
+        label: "{{ item.node }}/{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - linstor_pool | length > 0
+        - linstor_pool.props | default({}) | combine(linstor_want) != linstor_pool.props | default({})
+      vars:
+        linstor_want: "{{ dict(item.properties | default({}) | dict2items | map(attribute='key') | zip(item.properties | default({}) | dict2items | map(attribute='value') | map('string'))) }}"
+        linstor_pool: >-
+          {{ linstor_pools_read.json | selectattr('node_name', 'equalto', item.node)
+             | selectattr('storage_pool_name', 'equalto', item.name) | first | default({}) }}
+
+    - name: Read the resource groups
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-groups"
+      register: linstor_rgs_read
+      check_mode: false
+      when: linstor_cluster_api is succeeded
+
+    # A create takes no properties: the update below sets them, from a fresh read
+    - name: Resource groups exist
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-groups"
+        method: POST
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description | default('') }}"
+          select_filter: "{{ linstor_rg_filter }}"
+      changed_when: true
+      loop: "{{ linstor_resource_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.name not in linstor_rgs_read.json | map(attribute='name')
+
+    - name: Read the resource groups after the creation
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-groups"
+      register: linstor_rgs_read
+      check_mode: false
+      when: linstor_cluster_api is succeeded
+
+    - name: Resource groups match their placement and properties
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-groups/{{ item.name }}"
+        method: PUT
+        body:
+          description: "{{ item.description | default('') }}"
+          select_filter: "{{ linstor_rg_filter }}"
+          override_props: "{{ linstor_rg_props }}"
+      changed_when: true
+      loop: "{{ linstor_resource_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.name in linstor_rgs_read.json | map(attribute='name')
+        - >-
+          linstor_rg.description | default('') != item.description | default('')
+          or linstor_rg.select_filter | default({}) | combine(linstor_rg_filter) != linstor_rg.select_filter | default({})
+          or linstor_rg.props | default({}) | combine(linstor_rg_props) != linstor_rg.props | default({})
+      vars:
+        linstor_rg: "{{ linstor_rgs_read.json | selectattr('name', 'equalto', item.name) | first }}"

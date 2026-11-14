@@ -1,0 +1,114 @@
+---
+# One key store (certificate, key, CA chain) and one trust store (the CA) serve the satellite, the controller's
+# HTTPS and its SSL connector. PKCS12 under the .jks names LINSTOR reads. Group left to the controller unit, which
+# chowns /etc/linstor to root:linstor at each start for its dynamic user.
+- name: Store directory exists, root and the controller only
+  ansible.builtin.file:
+    path: "{{ linstor_ssl_dir }}"
+    state: directory
+    owner: root
+    mode: "0750"
+  register: linstor_ssl_dir_made
+
+- name: Generate the store password on the host, once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    openssl rand -hex 24 > {{ linstor_password_file | quote }}
+  args:
+    executable: /bin/bash
+    creates: "{{ linstor_password_file }}"
+  when: linstor_tls_store_password | length == 0
+
+- name: Read the store password
+  ansible.builtin.slurp:
+    src: "{{ linstor_password_file }}"
+  register: linstor_password_read
+  no_log: true
+  when: linstor_tls_store_password | length == 0
+  # Check mode on a fresh host: no password generated yet
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Build the stores when the certificate, key, CA or password changed
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    want=$( (cat {{ linstor_tls_cert | quote }} {{ linstor_tls_key | quote }} {{ linstor_tls_ca | quote }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
+    if [ -s {{ linstor_keystore | quote }} ] && [ -s {{ linstor_truststore | quote }} ] &&
+       [ "$(cat {{ linstor_stores_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
+    t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+    openssl pkcs12 -export -in {{ linstor_tls_cert | quote }} -inkey {{ linstor_tls_key | quote }} \
+      -certfile {{ linstor_tls_ca | quote }} -name linstor -out "$t/node.p12" -passout env:P
+    keytool -importkeystore -noprompt -srckeystore "$t/node.p12" -srcstoretype PKCS12 -srcstorepass:env P \
+      -destkeystore "$t/keystore.jks" -deststoretype PKCS12 -deststorepass:env P > /dev/null
+    keytool -importcert -noprompt -alias ca -file {{ linstor_tls_ca | quote }} \
+      -keystore "$t/certificates.jks" -storetype PKCS12 -storepass:env P > /dev/null
+    chmod 0640 "$t/keystore.jks" "$t/certificates.jks"
+    mv "$t/keystore.jks" {{ linstor_keystore | quote }}
+    mv "$t/certificates.jks" {{ linstor_truststore | quote }}
+    echo "$want" > {{ linstor_stores_stamp | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    P: "{{ linstor_store_pass }}"
+  register: linstor_stores
+  # The store password travels in the environment
+  no_log: true
+  when: not (ansible_check_mode and linstor_ssl_dir_made is changed)
+  changed_when: linstor_stores.stdout != 'unchanged'
+  notify: Restart LINSTOR
+
+# The satellite accepts the listed controller certificates only: Java trusts a certificate placed in the trust
+# store as an anchor, and the CA is not in it, so another certificate of the CA chains to nothing it trusts.
+# The TLS client picks its certificate by the issuer names the server lists, taken from the store: each pinned
+# certificate also gets a throwaway self-signed anchor named like its issuer, or the controller finds no certificate
+# to send. Its key lives in tmpfs for the keytool calls and is deleted at once: nothing is signed with it, so a
+# certificate of the CA (or of any other key) cannot chain to the anchor.
+- name: Build the satellite's trust store from the controller certificates
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    want=$( (cat {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
+    if [ -s {{ linstor_satellite_truststore | quote }} ] &&
+       [ "$(cat {{ linstor_satellite_trust_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
+    t=$(mktemp -d); m=$(mktemp -d -p /dev/shm); trap 'rm -rf "$t" "$m"' EXIT
+    i=0
+    for f in {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; do
+      keytool -importcert -noprompt -alias "controller$i" -file "$f" \
+        -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
+      issuer=$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$f" | sed 's/^issuer= *//')
+      subject=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$f" | sed 's/^subject= *//')
+      if [ "$issuer" != "$subject" ]; then
+        keytool -genkeypair -alias "issuer$i" -keyalg EC -keysize 256 -dname "$issuer" -validity 36500 \
+          -keystore "$m/issuer$i.p12" -storetype PKCS12 -storepass:env P -keypass:env P > /dev/null
+        keytool -exportcert -rfc -alias "issuer$i" -keystore "$m/issuer$i.p12" -storepass:env P -file "$m/issuer$i.pem" > /dev/null
+        rm -f "$m/issuer$i.p12"
+        keytool -importcert -noprompt -alias "issuer$i" -file "$m/issuer$i.pem" \
+          -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
+      fi
+      i=$((i + 1))
+    done
+    chmod 0640 "$t/satellite-trust.jks"
+    mv "$t/satellite-trust.jks" {{ linstor_satellite_truststore | quote }}
+    echo "$want" > {{ linstor_satellite_trust_stamp | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    P: "{{ linstor_store_pass }}"
+  register: linstor_satellite_trust_built
+  no_log: true
+  when:
+    - linstor_satellite
+    - linstor_tls_controller_certs | length > 0
+    - not (ansible_check_mode and linstor_ssl_dir_made is changed)
+  changed_when: linstor_satellite_trust_built.stdout != 'unchanged'
+  notify: Restart LINSTOR
+
+- name: No satellite trust store without controller certificates
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ linstor_satellite_truststore }}"
+    - "{{ linstor_satellite_trust_stamp }}"
+  when: linstor_tls_controller_certs | length == 0

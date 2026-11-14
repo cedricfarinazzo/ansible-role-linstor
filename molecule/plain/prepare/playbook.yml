@@ -1,0 +1,31 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Tools are installed
+      ansible.builtin.apt:
+        name:
+          - curl
+          - iproute2
+          - jq
+        update_cache: true
+        cache_valid_time: 3600
+
+    # Only the source and key part of the DRBD role: no module build in a container
+    - name: LINBIT source, its key checked against the pinned fingerprint
+      ansible.builtin.include_role:
+        name: cedricfarinazzo.drbd
+        tasks_from: repo.yml
+
+    # Minimal images drop /usr/share/man: the JRE's postinst then fails on its man page link
+    - name: Man page directory for the JRE's alternatives
+      ansible.builtin.file:
+        path: /usr/share/man/man1
+        state: directory
+        mode: "0755"
+
+    - name: Directory of the file-backed pool
+      ansible.builtin.file:
+        path: /srv/linstor-pool
+        state: directory
+        mode: "0700"

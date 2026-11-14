@@ -1,0 +1,66 @@
+---
+# present: packages, TLS stores, configuration, services and cluster objects; absent: remove what the role added
+linstor_state: present
+
+# Components on this host: a satellite, a controller, both (a combined node), and the linstor CLI
+linstor_satellite: true
+linstor_controller: false
+linstor_client: "{{ linstor_controller }}"
+# Installed with the components, by name, e.g. [drbd-reactor]
+linstor_packages_extra: []
+
+# Controller database: "" = LINSTOR's embedded H2 under /var/lib/linstor; or a JDBC or etcd:// URL
+linstor_controller_db_connection_url: ""
+linstor_controller_db_user: ""
+linstor_controller_db_password: ""
+
+# Mutual TLS from PEM files already on the host (your PKI): the role checks them, then builds the Java key and
+# trust stores. The satellite then talks SSL only, the controller serves HTTPS with client certificates required
+linstor_tls: false
+linstor_tls_cert: ""
+linstor_tls_key: ""
+linstor_tls_ca: ""
+linstor_tls_protocol: TLSv1.3
+# PEM certificates of the controller(s) this satellite accepts (a combined node lists its own). Set: the satellite
+# trusts only these, so another node's certificate from the same CA cannot take the satellite from its controller.
+# []: the satellite trusts the whole CA, and any certificate of it can connect (see README, Gotchas)
+linstor_tls_controller_certs: []
+# Key and trust store password: "" = generated on the host once and kept root-only beside the stores
+linstor_tls_store_password: ""
+
+# Satellite listener: 3366 plain, 3367 SSL by LINSTOR's convention
+linstor_satellite_bind_address: "::0"
+linstor_satellite_port: "{{ 3367 if linstor_tls else 3366 }}"
+
+# Plain REST API: never off (LINSTOR's [http] enabled = false stops HTTPS too); loopback-bound under TLS, where it
+# only redirects to HTTPS
+linstor_controller_http_listen: "{{ '127.0.0.1' if linstor_tls else '::' }}"
+linstor_controller_http_port: 3370
+linstor_controller_https_listen: "::"
+linstor_controller_https_port: 3371
+# The controller's plain connector to satellites; off when every node talks SSL
+linstor_controller_plain_connector: "{{ not linstor_tls }}"
+
+# linstor CLI configuration; controllers "" = this host's controller
+linstor_client_config: /etc/linstor/linstor-client.conf
+linstor_client_controllers: ""
+
+# Cluster objects set from this host through the REST API; on by default on the controller. The role adds and
+# updates them, never deletes one you remove from the lists
+linstor_cluster: "{{ linstor_controller }}"
+# "" = HTTPS on localhost with the TLS files under linstor_tls, else plain HTTP on 127.0.0.1
+linstor_api_url: ""
+# Each {name, address, type: satellite|combined|controller|auxiliary (satellite), encryption: ssl|plain
+# (ssl under linstor_tls), port (3367 ssl, 3366 plain)}; name = the node's host name (uname -n)
+linstor_nodes: []
+# Each {name, node, provider: lvm|lvm_thin|zfs|zfs_thin|file|file_thin|diskless, pool: <vg>, <vg>/<thinpool>, <zpool>
+# or <directory> (not for diskless), properties: {}}
+linstor_storage_pools: []
+# Each {name, place_count, storage_pools: [], drbd_options: {<section>/<option>: value} set as DrbdOptions/<key>,
+# properties: {}, description}. DRBD options take DRBD's base units (c-max-rate in KiB/s: 70M = 71680)
+linstor_resource_groups: []
+# Tries, 5 s apart, for the API to answer and each node with a storage pool to come online
+linstor_wait_retries: 36
+
+# absent: also remove the controller database and satellite state under /var/lib/linstor
+linstor_remove_data: false

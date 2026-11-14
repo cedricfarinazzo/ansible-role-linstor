@@ -1,0 +1,76 @@
+---
+linstor_conf_dir: /etc/linstor
+linstor_ssl_dir: /etc/linstor/ssl
+# The controller's SSL connector and both services read these names
+linstor_keystore: /etc/linstor/ssl/keystore.jks
+linstor_truststore: /etc/linstor/ssl/certificates.jks
+linstor_password_file: /etc/linstor/ssl/store.password
+# Satellite trust store holding only linstor_tls_controller_certs, with the sha256 its content was built from
+linstor_satellite_truststore: /etc/linstor/ssl/satellite-trust.jks
+linstor_satellite_trust_stamp: /etc/linstor/ssl/satellite-trust.sha256
+# sha256 of the certificate, key and CA the stores were built from: a change rebuilds them
+linstor_stores_stamp: /etc/linstor/ssl/stores.sha256
+linstor_satellite_conf: /etc/linstor/linstor_satellite.toml
+linstor_controller_conf: /etc/linstor/linstor.toml
+linstor_data_dir: /var/lib/linstor
+
+linstor_satellite_trust: "{{ linstor_satellite_truststore if linstor_tls_controller_certs | length > 0 else linstor_truststore }}"
+
+linstor_packages: >-
+  {{ (['linstor-satellite'] if linstor_satellite else []) + (['linstor-controller'] if linstor_controller else [])
+     + (['linstor-client'] if linstor_client else []) + linstor_packages_extra }}
+linstor_all_packages:
+  - linstor-satellite
+  - linstor-controller
+  - linstor-client
+linstor_services: >-
+  {{ (['linstor-satellite'] if linstor_satellite else []) + (['linstor-controller'] if linstor_controller else []) }}
+
+linstor_store_pass: "{{ linstor_tls_store_password or (linstor_password_read.content | default('') | b64decode | trim) }}"
+linstor_api: >-
+  {{ linstor_api_url or ('https://localhost:' ~ linstor_controller_https_port if linstor_tls
+     else 'http://127.0.0.1:' ~ linstor_controller_http_port) }}
+linstor_client_url: >-
+  {{ linstor_client_controllers or ('linstor+ssl://localhost:' ~ linstor_controller_https_port if linstor_tls
+     else 'linstor://localhost:' ~ linstor_controller_http_port) }}
+
+# The controller's outgoing connectors, as controller properties (its linstor.toml has no such section)
+linstor_connector_props: >-
+  {{ {'NetCom/PlainConnector/Enabled': linstor_controller_plain_connector | string | lower,
+      'NetCom/DebugSslConnector/Enabled': 'false'}
+     | combine({'NetCom/SslConnector/Enabled': 'true',
+                'NetCom/SslConnector/KeyStore': linstor_keystore,
+                'NetCom/SslConnector/KeyStorePasswd': linstor_store_pass,
+                'NetCom/SslConnector/KeyPasswd': linstor_store_pass,
+                'NetCom/SslConnector/TrustStore': linstor_truststore,
+                'NetCom/SslConnector/TrustStorePasswd': linstor_store_pass,
+                'NetCom/SslConnector/SslProtocol': linstor_tls_protocol} if linstor_tls else {}) }}
+
+linstor_node_types:
+  satellite: SATELLITE
+  combined: COMBINED
+  controller: CONTROLLER
+  auxiliary: AUXILIARY
+linstor_providers:
+  - lvm
+  - lvm_thin
+  - zfs
+  - zfs_thin
+  - file
+  - file_thin
+  - diskless
+
+# Per item of linstor_nodes / linstor_resource_groups, as the REST API takes and returns them
+linstor_node_encryption: "{{ item.encryption | default('ssl' if linstor_tls else 'plain') }}"
+linstor_node_netif:
+  name: default
+  address: "{{ item.address }}"
+  satellite_port: "{{ item.port | default(3367 if linstor_node_encryption == 'ssl' else 3366) | int }}"
+  satellite_encryption_type: "{{ linstor_node_encryption | upper }}"
+linstor_rg_filter: >-
+  {{ ({'place_count': item.place_count | int} if item.place_count is defined else {})
+     | combine({'storage_pool_list': item.storage_pools} if item.storage_pools | default([]) | length > 0 else {}) }}
+linstor_rg_props: >-
+  {{ dict((item.drbd_options | default({})).keys() | map('regex_replace', '^', 'DrbdOptions/')
+          | zip((item.drbd_options | default({})).values() | map('string')))
+     | combine(dict((item.properties | default({})).keys() | zip((item.properties | default({})).values() | map('string')))) }}
