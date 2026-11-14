@@ -1,6 +1,6 @@
 ---
 dependency:
-  # Into the scenario's ephemeral directory, which Molecule puts on the roles path; never ~/.ansible
+  # Into the scenario's ephemeral directory, put on the roles path below; never ~/.ansible
   name: shell
   command: >-
     sh -c 'ansible-galaxy collection install -r "$MOLECULE_SCENARIO_DIRECTORY/collections.yml"
@@ -36,6 +36,9 @@ platforms:
       - name: linstor-${MOLECULE_DISTRO:-debian13}
 provisioner:
   name: ansible
+  env:
+    # Molecule does not add it: without it only a developer's ~/.ansible/roles hides the missing role
+    ANSIBLE_ROLES_PATH: ${MOLECULE_EPHEMERAL_DIRECTORY}/roles
   playbooks:
     prepare: prepare/playbook.yml
     converge: converge/playbook.yml

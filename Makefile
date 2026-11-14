@@ -10,7 +10,7 @@ help:
 	@echo "  test                       - Alias for molecule-test"
 	@echo "  molecule-test-all          - Run molecule tests against all supported distributions, in parallel"
 	@echo "  molecule-test-<distro>     - Run molecule tests against specific distribution"
-	@echo "  molecule-test-failure      - Run the failure scenario (bad certificates, no package source) on $(DEFAULT_DISTRO)
+	@echo "  molecule-test-failure      - Run the failure scenario (bad certificates, no package source) on $(DEFAULT_DISTRO)"
 	@echo "  molecule-test-cluster      - Run the cluster scenario (a combined node and a satellite over mutual TLS) on $(DEFAULT_DISTRO)"
 	@echo "  lint                       - Run ansible-lint"
 	@echo "  help                       - Show this help message"
