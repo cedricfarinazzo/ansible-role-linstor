@@ -1,0 +1,25 @@
+---
+# Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: Verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Each case stopped the role on its own check, with nothing of LINSTOR on the host
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        expect() {
+          f=/root/molecule-$1
+          [ -f $f ] || fail "$1: the role did not fail"
+          grep -qx "$2" $f || fail "$1: failed on $(head -1 $f)"
+          grep -q "$3" $f || fail "$1: message $(sed -n 2p $f)"
+          grep -qx 'left:' $f || fail "$1: left $(grep '^left:' $f)"
+        }
+        expect missing 'The certificate is usable' 'missing: /root/pki/missing.crt'
+        expect mismatch 'The certificate is usable' 'the key does not match the certificate'
+        expect other-ca 'The certificate is usable' 'the certificate is not signed by the CA'
+        expect expired 'The certificate is usable' 'the certificate has expired'
+        expect no-source 'Every package has a source' 'No configured APT source provides linstor-satellite'
+      args:
+        executable: /bin/bash
+      changed_when: false

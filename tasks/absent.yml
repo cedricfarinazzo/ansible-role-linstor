@@ -1,0 +1,27 @@
+---
+# Cluster objects stay in the controller database; the database itself only goes with linstor_remove_data.
+- name: Find the LINSTOR services
+  ansible.builtin.service_facts:
+
+- name: LINSTOR services are stopped and disabled
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ ['linstor-controller', 'linstor-satellite'] | select('in', linstor_known_units) | list }}"
+  vars:
+    linstor_known_units: "{{ ansible_facts.services.keys() | map('regex_replace', '[.]service$', '') | list }}"
+
+- name: LINSTOR packages are purged
+  ansible.builtin.apt:
+    name: "{{ linstor_all_packages + linstor_packages_extra }}"
+    state: absent
+    purge: true
+
+- name: Files the role wrote are removed
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ [linstor_ssl_dir, linstor_satellite_conf, linstor_controller_conf, linstor_client_config]
+       + ([linstor_data_dir] if linstor_remove_data else []) }}

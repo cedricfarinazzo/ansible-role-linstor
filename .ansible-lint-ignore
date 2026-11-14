@@ -1,0 +1,5 @@
+# Molecule playbooks name the role under test by its path
+molecule/default/converge/playbook.yml role-name[path]
+molecule/default/side_effect/playbook.yml role-name[path]
+molecule/failure/converge/case.yml role-name[path]
+molecule/cluster/converge/playbook.yml role-name[path]

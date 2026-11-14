@@ -1,0 +1,58 @@
+---
+# A renewed certificate rebuilds the stores and the node comes back over SSL; then state absent removes everything
+# the role added.
+- name: Renew the node certificate
+  hosts: all
+  pre_tasks:
+    - name: Sign a new certificate for the same key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /root/pki
+        openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 60 -extfile ext
+        sha256sum node.crt > renewed.sha256
+      args:
+        executable: /bin/bash
+      changed_when: true
+  roles:
+    - role: ../../../../ansible-role-linstor
+  post_tasks:
+    - name: The key store holds the renewed certificate and the node is online over SSL
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        p=$(cat /etc/linstor/ssl/store.password)
+        f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/node.crt | cut -d= -f2)
+        keytool -list -keystore /etc/linstor/ssl/keystore.jks -storepass "$p" | grep -q "$f" || fail "old certificate kept"
+        for i in $(seq 30); do
+          linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
+            > /dev/null && exit 0
+          sleep 3
+        done
+        fail "node not online after the renewal"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Remove LINSTOR
+  hosts: all
+  roles:
+    - role: ../../../../ansible-role-linstor
+      vars:
+        linstor_state: absent
+        linstor_remove_data: true
+  post_tasks:
+    - name: Nothing the role added remains
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for f in /etc/linstor/ssl /etc/linstor/linstor.toml /etc/linstor/linstor_satellite.toml \
+          /etc/linstor/linstor-client.conf /var/lib/linstor; do
+          if [ -e "$f" ]; then fail "$f remains"; fi
+        done
+        for p in linstor-satellite linstor-controller linstor-client drbd-reactor; do
+          if dpkg-query -W -f '${Status}' $p 2>/dev/null | grep -q 'ok installed'; then fail "$p installed"; fi
+        done
+        if ss -Htln | grep -qE ':33(66|67|70|71) '; then fail "a LINSTOR port still listens"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false

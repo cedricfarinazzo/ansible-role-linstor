@@ -1,0 +1,90 @@
+---
+# The LINBIT source on both nodes; a test CA on the controller signs each node's CSR, as a real PKI would.
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Tools are installed
+      ansible.builtin.apt:
+        name:
+          - openssl
+          - curl
+          - iproute2
+          - jq
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: LINBIT source, its key checked against the pinned fingerprint
+      ansible.builtin.include_role:
+        name: cedricfarinazzo.drbd
+        tasks_from: repo.yml
+
+    - name: Directory of the file-backed pool
+      ansible.builtin.file:
+        path: /srv/linstor-pool
+        state: directory
+        mode: "0700"
+
+    - name: The node's key and CSR, made on the node
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mkdir -p /root/pki && cd /root/pki
+        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout node.key -out node.csr \
+          -subj "/CN={{ ansible_facts.hostname }}"
+        chmod 0600 node.key
+      args:
+        executable: /bin/bash
+        creates: /root/pki/node.csr
+
+    - name: The test CA, on the controller only
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mkdir -p /root/ca && cd /root/ca
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout ca.key -out ca.crt -days 30 -subj "/CN=Test CA" \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout rogue.key -out rogue.crt -days 30 -subj "/CN=rogue"
+      args:
+        executable: /bin/bash
+        creates: /root/ca/ca.crt
+      when: inventory_hostname == molecule_controller
+
+    - name: Read the CSR
+      ansible.builtin.slurp:
+        src: /root/pki/node.csr
+      register: molecule_csr
+
+    - name: Sign the CSR on the controller
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd /root/ca
+        printf %s {{ molecule_csr.content | quote }} | base64 -d > {{ ansible_facts.hostname }}.csr
+        printf 'subjectAltName=DNS:{{ ansible_facts.hostname }},DNS:localhost,IP:127.0.0.1,IP:{{ ansible_facts.default_ipv4.address }}\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' > {{ ansible_facts.hostname }}.ext
+        openssl x509 -req -in {{ ansible_facts.hostname }}.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 \
+          -extfile {{ ansible_facts.hostname }}.ext
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ molecule_controller }}"
+      register: molecule_signed
+      changed_when: true
+
+    - name: Read the CA and the rogue pair
+      ansible.builtin.slurp:
+        src: /root/ca/{{ item }}
+      loop:
+        - ca.crt
+        - rogue.crt
+        - rogue.key
+      register: molecule_ca
+      delegate_to: "{{ molecule_controller }}"
+
+    - name: The certificate, the CA and the rogue pair on the node
+      ansible.builtin.copy:
+        dest: /root/pki/{{ item.dest }}
+        content: "{{ item.content }}"
+        mode: "0600"
+      loop:
+        - {dest: node.crt, content: "{{ molecule_signed.stdout }}\n"}
+        - {dest: ca.crt, content: "{{ molecule_ca.results[0].content | b64decode }}"}
+        - {dest: rogue.crt, content: "{{ molecule_ca.results[1].content | b64decode }}"}
+        - {dest: rogue.key, content: "{{ molecule_ca.results[2].content | b64decode }}"}
+      loop_control:
+        label: "{{ item.dest }}"

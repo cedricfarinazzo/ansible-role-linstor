@@ -1,0 +1,140 @@
+---
+# Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars:
+    molecule_curl: curl -s -o /dev/null -w '%{http_code}' --cacert /root/pki/ca.crt
+    molecule_api: https://localhost:3371/v1
+  tasks:
+    - name: Packages, services and root-only files
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for p in linstor-satellite linstor-controller linstor-client drbd-reactor; do
+          dpkg-query -W -f '${Status}' $p | grep -q 'ok installed' || fail "$p not installed"
+        done
+        for s in linstor-satellite linstor-controller; do
+          systemctl is-active -q $s || fail "$s not active"; systemctl is-enabled -q $s || fail "$s not enabled"
+        done
+        # Group linstor is the dynamic user of the controller; nobody else reads them
+        for f in /etc/linstor/linstor.toml /etc/linstor/linstor_satellite.toml \
+          /etc/linstor/ssl/keystore.jks /etc/linstor/ssl/certificates.jks; do
+          [ "$(stat -c '%U %a' $f)" = "root 640" ] || fail "$f: $(stat -c '%U %a' $f)"
+        done
+        [ "$(stat -c '%U %a' /etc/linstor/ssl/store.password)" = "root 600" ] || fail "password file mode"
+        [ "$(stat -c '%U %a' /etc/linstor/ssl)" = "root 750" ] || fail "ssl dir mode"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The TOML files name SSL, the stores, TLS 1.3 and the loopback plain listener
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        s=/etc/linstor/linstor_satellite.toml c=/etc/linstor/linstor.toml
+        grep -qx '  type = "ssl"' $s || fail "satellite type"
+        grep -qx '  port = 3367' $s || fail "satellite port"
+        grep -qx '  ssl_protocol = "TLSv1.3"' $s || fail "satellite protocol"
+        grep -qx '  server_certificate = "/etc/linstor/ssl/keystore.jks"' $s || fail "satellite keystore"
+        grep -qx '  trusted_certificates = "/etc/linstor/ssl/certificates.jks"' $s || fail "satellite truststore"
+        p=$(cat /etc/linstor/ssl/store.password); grep -qx "  keystore_password = \"$p\"" $s || fail "satellite password"
+        sed -n '/^\[http\]/,/^\[/p' $c | grep -qx '  listen_addr = "127.0.0.1"' || fail "http listen"
+        sed -n '/^\[https\]/,$p' $c | grep -qx '  enabled = true' || fail "https enabled"
+        sed -n '/^\[https\]/,$p' $c | grep -qx '  truststore = "/etc/linstor/ssl/certificates.jks"' || fail "https truststore"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The key store holds the node key and certificate chain, the trust store the CA only
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        p=$(cat /etc/linstor/ssl/store.password)
+        k=$(keytool -list -keystore /etc/linstor/ssl/keystore.jks -storepass "$p") || fail "keystore unreadable"
+        grep -q 'PrivateKeyEntry' <<<"$k" || fail "no key entry"
+        t=$(keytool -list -keystore /etc/linstor/ssl/certificates.jks -storepass "$p") || fail "truststore unreadable"
+        [ "$(grep -c trustedCertEntry <<<"$t")" = 1 ] || fail "truststore: $t"
+        f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/ca.crt | cut -d= -f2)
+        grep -q "$f" <<<"$t" || fail "truststore does not hold the CA"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # 3366 off; 3370 on loopback only; 3367 and 3371 on every address
+    - name: Listeners
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        l=$(ss -Htln | awk '{print $4}')
+        if grep -qE ':3366$' <<<"$l"; then fail "something listens on 3366"; fi
+        h=$(grep -E ':3370$' <<<"$l"); [ -n "$h" ] || fail "nothing on 3370"
+        if grep -vE '^(\[::ffff:)?127\.0\.0\.1\]?:3370$' <<<"$h"; then fail "3370 beyond loopback: $h"; fi
+        grep -qE '^(\*|\[::\]|0\.0\.0\.0):3367$' <<<"$l" || fail "3367 not on every address: $l"
+        grep -qE '^(\*|\[::\]|0\.0\.0\.0):3371$' <<<"$l" || fail "3371 not on every address: $l"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The node is online over SSL; the pool and resource group exist
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        n=$(linstor -m node list) || fail "linstor node list"
+        jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE" and .type == "COMBINED")
+          | .net_interfaces[] | select(.satellite_encryption_type == "SSL" and .satellite_port == 3367)' <<<"$n" \
+          > /dev/null || fail "node: $n"
+        p=$(linstor -m storage-pool list) || fail "linstor storage-pool list"
+        jq -e '.[0][] | select(.storage_pool_name == "pool-test" and .provider_kind == "FILE_THIN"
+          and .props["StorDriver/StorPoolName"] == "/srv/linstor-pool")' <<<"$p" > /dev/null || fail "pool: $p"
+        r=$(linstor -m resource-group list) || fail "linstor resource-group list"
+        jq -e '.[0][] | select(.name == "rg-test" and .select_filter.place_count == 1
+          and .select_filter.storage_pool_list == ["pool-test"] and .description == "test group"
+          and .props["DrbdOptions/PeerDevice/c-max-rate"] == "71680")' <<<"$r" > /dev/null || fail "rg: $r"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The controller connects to satellites over SSL only; no debug or plain connector
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        c=$(curl -sf --cacert /root/pki/ca.crt --cert /root/pki/node.crt --key /root/pki/node.key \
+          {{ molecule_api }}/controller/properties) || fail "controller properties"
+        jq -e '(.["NetCom/PlainConnector/Enabled"] | ascii_downcase) == "false"
+          and (.["NetCom/DebugSslConnector/Enabled"] | ascii_downcase) == "false"
+          and .["NetCom/SslConnector/SslProtocol"] == "TLSv1.3"' <<<"$c" > /dev/null || fail "connectors: $(jq -c 'with_entries(select((.key | test("^NetCom/")) and (.key | test("Passwd") | not)))' <<<"$c")"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # Mutual TLS: the REST API answers a client of the CA only; plain HTTP redirects to HTTPS
+    - name: HTTPS 3371 refuses a client without a certificate or with another CA's
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        c=$({{ molecule_curl }} --cert /root/pki/node.crt --key /root/pki/node.key {{ molecule_api }}/controller/version)
+        [ "$c" = 200 ] || fail "with the node certificate: $c"
+        c=$({{ molecule_curl }} {{ molecule_api }}/controller/version); [ "$c" = 000 ] || fail "without a certificate: $c"
+        c=$({{ molecule_curl }} --cert /root/pki/rogue.crt --key /root/pki/rogue.key {{ molecule_api }}/controller/version)
+        [ "$c" = 000 ] || fail "with another CA's certificate: $c"
+        c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3370/v1/nodes); [ "$c" = 302 ] || fail "plain 3370: $c"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # The satellite drops a TLS peer without a certificate of the CA right after the handshake. A node of the CA is
+    # proven by the controller's SSL session; a second one from openssl would take the satellite from the controller
+    - name: The satellite 3367 refuses a peer without a certificate or with another CA's, and keeps its controller
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        probe() { (sleep 3) | timeout 8 openssl s_client -connect 127.0.0.1:3367 -CAfile /root/pki/ca.crt "$@" 2>&1; }
+        o=$(probe); grep -q 'unexpected eof' <<<"$o" || fail "accepted without a certificate"
+        o=$(probe -cert /root/pki/rogue.crt -key /root/pki/rogue.key); grep -q 'unexpected eof' <<<"$o" || fail "accepted another CA"
+        sleep 20
+        linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
+          > /dev/null || fail "the refused peers took the node offline"
+      args:
+        executable: /bin/bash
+      changed_when: false

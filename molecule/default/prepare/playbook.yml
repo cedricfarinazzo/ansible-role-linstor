@@ -1,0 +1,42 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Update the package cache
+      ansible.builtin.apt:
+        name:
+          - openssl
+          - curl
+          - iproute2
+          - jq
+        update_cache: true
+        cache_valid_time: 3600
+
+    # Only the source and key part of the DRBD role: no module build in a container
+    - name: LINBIT source, its key checked against the pinned fingerprint
+      ansible.builtin.include_role:
+        name: cedricfarinazzo.drbd
+        tasks_from: repo.yml
+
+    - name: Directory of the file-backed pool
+      ansible.builtin.file:
+        path: /srv/linstor-pool
+        state: directory
+        mode: "0700"
+
+    # A test CA, the node's certificate (server and client) and a rogue one from another CA
+    - name: Make the test certificates
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mkdir -p /root/pki && cd /root/pki
+        ec="-newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes"
+        openssl req -x509 $ec -keyout ca.key -out ca.crt -days 30 -subj "/CN=Test CA" \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+        openssl req $ec -keyout node.key -out node.csr -subj "/CN=linstor-node"
+        printf 'subjectAltName=DNS:linstor-node,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' > ext
+        openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 30 -extfile ext
+        openssl req -x509 $ec -keyout rogue.key -out rogue.crt -days 30 -subj "/CN=rogue" -addext subjectAltName=DNS:localhost
+        chmod 0600 ./*.key
+      args:
+        executable: /bin/bash
+        creates: /root/pki/node.crt

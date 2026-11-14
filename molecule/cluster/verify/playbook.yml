@@ -1,0 +1,78 @@
+---
+# Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: Verify the cluster from the controller
+  hosts: controllers
+  gather_facts: false
+  tasks:
+    - name: Both nodes online over SSL, a pool on each, the group with its DRBD options
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for i in $(seq 30); do
+          n=$(linstor -m node list)
+          [ "$(jq '[.[0][] | select(.connection_status == "ONLINE")] | length' <<<"$n")" = 2 ] && break; sleep 3
+        done
+        for h in linstor-a:COMBINED linstor-b:SATELLITE; do
+          jq -e --arg n "${h%%:*}" --arg t "${h##*:}" '.[0][] | select(.name == $n and .type == $t
+            and .connection_status == "ONLINE") | .net_interfaces[] | select(.satellite_encryption_type == "SSL"
+            and .satellite_port == 3367)' <<<"$n" > /dev/null || fail "$h: $n"
+        done
+        p=$(linstor -m storage-pool list)
+        [ "$(jq '[.[0][] | select(.storage_pool_name == "pool-file" and .provider_kind == "FILE_THIN")] | length' <<<"$p")" = 2 ] \
+          || fail "pools: $p"
+        r=$(linstor -m resource-group list)
+        jq -e '.[0][] | select(.name == "rg-two" and .select_filter.place_count == 2
+          and .props["DrbdOptions/PeerDevice/c-max-rate"] == "71680" and .props["DrbdOptions/Net/tls"] == "yes")' \
+          <<<"$r" > /dev/null || fail "rg: $r"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Verify mutual TLS across the network
+  hosts: all
+  gather_facts: true
+  vars:
+    molecule_peer: "{{ hostvars[(groups['all'] | difference([inventory_hostname]) | first)]['ansible_facts']['default_ipv4']['address'] }}"
+    molecule_ctrl_ip: "{{ hostvars[molecule_controller]['ansible_facts']['default_ipv4']['address'] }}"
+  tasks:
+    - name: The peer's satellite refuses a peer without a certificate of the CA; nothing on 3366 anywhere
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        probe() { (sleep 3) | timeout 8 openssl s_client -connect {{ molecule_peer }}:3367 -CAfile /root/pki/ca.crt "$@" 2>&1; }
+        o=$(probe); grep -q 'unexpected eof' <<<"$o" || fail "peer satellite accepted no certificate"
+        o=$(probe -cert /root/pki/rogue.crt -key /root/pki/rogue.key); grep -q 'unexpected eof' <<<"$o" || fail "peer accepted another CA"
+        if timeout 3 bash -c 'echo > /dev/tcp/{{ molecule_peer }}/3366' 2>/dev/null; then fail "peer 3366 open"; fi
+        if ss -Htln | grep -qE ':3366 '; then fail "3366 listens here"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The controller's REST API over the network needs a client certificate of the CA; 3370 stays on loopback
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        u=https://{{ molecule_ctrl_ip }}:3371/v1/controller/version
+        c=$(curl -s -o /dev/null -w '%{http_code}' --cacert /root/pki/ca.crt --cert /root/pki/node.crt --key /root/pki/node.key $u)
+        [ "$c" = 200 ] || fail "with a node certificate: $c"
+        c=$(curl -s -o /dev/null -w '%{http_code}' --cacert /root/pki/ca.crt $u); [ "$c" = 000 ] || fail "without: $c"
+        c=$(curl -s -o /dev/null -w '%{http_code}' --cacert /root/pki/ca.crt --cert /root/pki/rogue.crt --key /root/pki/rogue.key $u)
+        [ "$c" = 000 ] || fail "another CA: $c"
+        if timeout 3 bash -c 'echo > /dev/tcp/{{ molecule_ctrl_ip }}/3370' 2>/dev/null; then fail "3370 reachable on {{ molecule_ctrl_ip }}"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: The refused peers left both nodes online
+  hosts: controllers
+  gather_facts: false
+  tasks:
+    - name: Both nodes still online
+      ansible.builtin.shell: |
+        set -o pipefail
+        sleep 20
+        [ "$(linstor -m node list | jq '[.[0][] | select(.connection_status == "ONLINE")] | length')" = 2 ] ||
+          { echo "FAIL: a node went offline after the refused probes"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false

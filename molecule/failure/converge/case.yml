@@ -1,0 +1,24 @@
+---
+- name: "Case {{ molecule_case.name }}"
+  block:
+    - name: "Run the role: {{ molecule_case.name }}"
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-linstor
+      vars:
+        linstor_tls_cert: "{{ molecule_case.vars.linstor_tls_cert | default('/root/pki/node.crt') }}"
+        linstor_tls_key: "{{ molecule_case.vars.linstor_tls_key | default('/root/pki/node.key') }}"
+  rescue:
+    - name: Find what the failed run left
+      ansible.builtin.shell: |
+        set -o pipefail
+        ls -d /etc/linstor /var/lib/linstor 2>/dev/null; dpkg -l 'linstor-*' 2>/dev/null | grep '^ii' || true
+      args:
+        executable: /bin/bash
+      register: molecule_left
+      changed_when: false
+
+    - name: Record the failure
+      ansible.builtin.copy:
+        dest: /root/molecule-{{ molecule_case.name }}
+        content: "{{ ansible_failed_task.name }}\n{{ ansible_failed_result.msg }}\nleft:{{ molecule_left.stdout_lines | join(' ') }}\n"
+        mode: "0644"

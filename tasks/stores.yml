@@ -1,0 +1,57 @@
+---
+# One key store (certificate, key, CA chain) and one trust store (the CA) serve the satellite, the controller's
+# HTTPS and its SSL connector. PKCS12 under the .jks names LINSTOR reads. Group left to the controller unit, which
+# chowns /etc/linstor to root:linstor at each start for its dynamic user.
+- name: Store directory exists, root and the controller only
+  ansible.builtin.file:
+    path: "{{ linstor_ssl_dir }}"
+    state: directory
+    owner: root
+    mode: "0750"
+  register: linstor_ssl_dir_made
+
+- name: Generate the store password on the host, once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    openssl rand -hex 24 > {{ linstor_password_file | quote }}
+  args:
+    executable: /bin/bash
+    creates: "{{ linstor_password_file }}"
+  when: linstor_tls_store_password | length == 0
+
+- name: Read the store password
+  ansible.builtin.slurp:
+    src: "{{ linstor_password_file }}"
+  register: linstor_password_read
+  no_log: true
+  when: linstor_tls_store_password | length == 0
+  # Check mode on a fresh host: no password generated yet
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Build the stores when the certificate, key, CA or password changed
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    want=$( (cat {{ linstor_tls_cert | quote }} {{ linstor_tls_key | quote }} {{ linstor_tls_ca | quote }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
+    if [ -s {{ linstor_keystore | quote }} ] && [ -s {{ linstor_truststore | quote }} ] &&
+       [ "$(cat {{ linstor_stores_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
+    t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+    openssl pkcs12 -export -in {{ linstor_tls_cert | quote }} -inkey {{ linstor_tls_key | quote }} \
+      -certfile {{ linstor_tls_ca | quote }} -name linstor -out "$t/node.p12" -passout env:P
+    keytool -importkeystore -noprompt -srckeystore "$t/node.p12" -srcstoretype PKCS12 -srcstorepass:env P \
+      -destkeystore "$t/keystore.jks" -deststoretype PKCS12 -deststorepass:env P > /dev/null
+    keytool -importcert -noprompt -alias ca -file {{ linstor_tls_ca | quote }} \
+      -keystore "$t/certificates.jks" -storetype PKCS12 -storepass:env P > /dev/null
+    chmod 0640 "$t/keystore.jks" "$t/certificates.jks"
+    mv "$t/keystore.jks" {{ linstor_keystore | quote }}
+    mv "$t/certificates.jks" {{ linstor_truststore | quote }}
+    echo "$want" > {{ linstor_stores_stamp | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    P: "{{ linstor_store_pass }}"
+  register: linstor_stores
+  when: not (ansible_check_mode and linstor_ssl_dir_made is changed)
+  changed_when: linstor_stores.stdout != 'unchanged'
+  notify: Restart LINSTOR

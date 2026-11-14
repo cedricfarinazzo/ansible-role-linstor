@@ -1,0 +1,67 @@
+---
+# The controller's connectors to satellites are controller properties, read at its start: set, then restart once.
+- name: Controller connectors
+  module_defaults:
+    ansible.builtin.uri:
+      client_cert: "{{ linstor_tls_cert if linstor_tls else None }}"
+      client_key: "{{ linstor_tls_key if linstor_tls else None }}"
+      ca_path: "{{ linstor_tls_ca if linstor_tls else None }}"
+      body_format: json
+      status_code:
+        - 200
+        - 201
+      timeout: 60
+  block:
+    # Check mode on a fresh host: no controller runs yet
+    - name: Wait for the controller API
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/controller/version"
+      register: linstor_api_up
+      until: linstor_api_up.status | default(0) == 200
+      retries: "{{ 1 if ansible_check_mode else linstor_wait_retries }}"
+      delay: 5
+      check_mode: false
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Read the controller properties
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/controller/properties"
+      register: linstor_controller_props
+      check_mode: false
+      no_log: true
+      when: linstor_api_up is succeeded
+
+    # Values compared case-insensitively: LINSTOR answers "False" for "false"
+    - name: Find the connector properties to change
+      ansible.builtin.set_fact:
+        linstor_props_diff: >-
+          {% set d = {} %}{% for k, v in linstor_connector_props.items() %}{% if
+          (linstor_controller_props.json | default({}))[k] | default('') | string | lower != v | string | lower %}{%
+          set _ = d.update({k: v}) %}{% endif %}{% endfor %}{{ d }}
+      no_log: true
+      when: linstor_api_up is succeeded
+
+    - name: Set the connector properties
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/controller/properties"
+        method: POST
+        body:
+          override_props: "{{ linstor_props_diff }}"
+      no_log: true
+      changed_when: true
+      when: linstor_api_up is succeeded and linstor_props_diff | length > 0
+
+    - name: Restart the controller on its new connectors
+      ansible.builtin.systemd_service:
+        name: linstor-controller
+        state: restarted
+      when: linstor_api_up is succeeded and linstor_props_diff | length > 0
+
+    - name: Wait for the restarted controller API
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/controller/version"
+      register: linstor_api_back
+      until: linstor_api_back.status | default(0) == 200
+      retries: "{{ linstor_wait_retries }}"
+      delay: 5
+      when: linstor_api_up is succeeded and linstor_props_diff | length > 0 and not ansible_check_mode

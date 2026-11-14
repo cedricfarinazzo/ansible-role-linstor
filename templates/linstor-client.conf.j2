@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+[global]
+controllers = {{ linstor_client_url }}
+{% if linstor_tls %}
+certfile = {{ linstor_tls_cert }}
+keyfile = {{ linstor_tls_key }}
+cafile = {{ linstor_tls_ca }}
+{% endif %}

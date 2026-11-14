@@ -1,0 +1,31 @@
+---
+galaxy_info:
+  role_name: linstor
+  namespace: cedricfarinazzo
+  author: Cédric Farinazzo
+  description: LINSTOR satellite, controller and client with mutual TLS from your certificates, nodes, storage pools and resource groups set through the controller's REST API
+
+  license: MIT
+
+  min_ansible_version: "2.15"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - noble
+        - resolute
+
+  galaxy_tags:
+    - linstor
+    - drbd
+    - storage
+    - replication
+    - linbit
+    - tls
+    - system
+
+dependencies: []

@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+{% if linstor_controller_db_connection_url %}
+[db]
+  connection_url = "{{ linstor_controller_db_connection_url }}"
+{% if linstor_controller_db_user %}
+  user = "{{ linstor_controller_db_user }}"
+{% endif %}
+{% if linstor_controller_db_password %}
+  password = "{{ linstor_controller_db_password }}"
+{% endif %}
+
+{% endif %}
+[http]
+  enabled = true
+  listen_addr = "{{ linstor_controller_http_listen }}"
+  port = {{ linstor_controller_http_port }}
+
+[https]
+  enabled = {{ linstor_tls | lower }}
+{% if linstor_tls %}
+  listen_addr = "{{ linstor_controller_https_listen }}"
+  port = {{ linstor_controller_https_port }}
+  keystore = "{{ linstor_keystore }}"
+  keystore_password = "{{ linstor_store_pass }}"
+  truststore = "{{ linstor_truststore }}"
+  truststore_password = "{{ linstor_store_pass }}"
+{% endif %}

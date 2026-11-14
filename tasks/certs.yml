@@ -1,0 +1,36 @@
+---
+# Before any package or LINSTOR file: a bad certificate stops the role with the host untouched.
+- name: OpenSSL is installed
+  ansible.builtin.apt:
+    name: openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Check the certificate, its key and its CA
+  ansible.builtin.shell: |
+    set -uo pipefail
+    for f in {{ linstor_tls_cert | quote }} {{ linstor_tls_key | quote }} {{ linstor_tls_ca | quote }}; do
+      [ -r "$f" ] || { echo "missing: $f"; exit 1; }
+    done
+    c=$(openssl x509 -noout -pubkey -in {{ linstor_tls_cert | quote }} 2>&1) || { echo "not a PEM certificate: $c"; exit 1; }
+    k=$(openssl pkey -pubout -in {{ linstor_tls_key | quote }} 2>&1) || { echo "not a PEM private key without passphrase"; exit 1; }
+    [ "$c" = "$k" ] || { echo "the key does not match the certificate"; exit 1; }
+    openssl x509 -noout -checkend 0 -in {{ linstor_tls_cert | quote }} > /dev/null || { echo "the certificate has expired"; exit 1; }
+    openssl verify -CAfile {{ linstor_tls_ca | quote }} {{ linstor_tls_cert | quote }} > /dev/null 2>&1 ||
+      { echo "the certificate is not signed by the CA"; exit 1; }
+  args:
+    executable: /bin/bash
+  register: linstor_cert_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: The certificate is usable
+  ansible.builtin.assert:
+    that:
+      - linstor_cert_check.rc == 0
+    fail_msg: >-
+      linstor_tls_cert {{ linstor_tls_cert }}, linstor_tls_key {{ linstor_tls_key }}, linstor_tls_ca {{ linstor_tls_ca }}:
+      {{ linstor_cert_check.stdout | default('') }}. Nothing was changed.
+    quiet: true

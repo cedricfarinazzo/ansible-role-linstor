@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[netcom]
+  type = "{{ 'ssl' if linstor_tls else 'plain' }}"
+  bind_address = "{{ linstor_satellite_bind_address }}"
+  port = {{ linstor_satellite_port }}
+{% if linstor_tls %}
+  server_certificate = "{{ linstor_keystore }}"
+  trusted_certificates = "{{ linstor_truststore }}"
+  key_password = "{{ linstor_store_pass }}"
+  keystore_password = "{{ linstor_store_pass }}"
+  truststore_password = "{{ linstor_store_pass }}"
+  ssl_protocol = "{{ linstor_tls_protocol }}"
+{% endif %}
