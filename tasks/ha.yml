@@ -1,0 +1,60 @@
+---
+# LINBIT's controller HA: drbd-reactor promotes the database resource, mounts it on /var/lib/linstor and starts the
+# controller there; the units are written on every controller-capable node and enabled on none.
+- name: Mount unit of the controller database
+  ansible.builtin.template:
+    src: var-lib-linstor.mount.j2
+    dest: "{{ linstor_ha_mount_unit }}"
+    owner: root
+    mode: "0644"
+  notify: Reload systemd
+  when: linstor_ha_controller
+
+- name: Configuration directory of drbd-reactor exists
+  ansible.builtin.file:
+    path: "{{ linstor_ha_promoter | dirname }}"
+    state: directory
+    owner: root
+    mode: "0755"
+  when: linstor_ha_controller
+
+- name: Promoter of the controller for drbd-reactor
+  ansible.builtin.template:
+    src: drbd-reactor-promoter.toml.j2
+    dest: "{{ linstor_ha_promoter }}"
+    owner: root
+    mode: "0644"
+  notify: Reload drbd-reactor
+  when: linstor_ha_controller
+
+# Check mode on a fresh host: the package is not installed, the unit is unknown
+- name: The controller is not enabled as a plain service
+  ansible.builtin.systemd_service:
+    name: linstor-controller
+    enabled: false
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: linstor_ha_controller
+
+- name: Satellite drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ linstor_satellite_dropin | dirname }}"
+    state: directory
+    owner: root
+    mode: "0755"
+  when: linstor_satellite and linstor_satellite_keep_resources | length > 0
+
+- name: Satellite keeps the listed resources
+  ansible.builtin.template:
+    src: linstor-satellite-dropin.conf.j2
+    dest: "{{ linstor_satellite_dropin }}"
+    owner: root
+    mode: "0644"
+  notify: Restart the satellite on its drop-in
+  when: linstor_satellite and linstor_satellite_keep_resources | length > 0
+
+- name: No satellite drop-in without resources to keep
+  ansible.builtin.file:
+    path: "{{ linstor_satellite_dropin }}"
+    state: absent
+  notify: Restart the satellite on its drop-in
+  when: linstor_satellite_keep_resources | length == 0 or not linstor_satellite

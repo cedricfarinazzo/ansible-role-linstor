@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Started by drbd-reactor on the node where {{ linstor_controller_ha_resource }} is Primary; never enable it
+[Unit]
+Description=LINSTOR controller database on DRBD resource {{ linstor_controller_ha_resource }}
+
+[Mount]
+What=/dev/drbd/by-res/{{ linstor_controller_ha_resource }}/0
+Where={{ linstor_data_dir }}
+Type={{ linstor_controller_ha_fstype }}
+Options={{ linstor_controller_ha_mount_options }}

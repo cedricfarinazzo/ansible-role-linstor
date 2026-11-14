@@ -8,13 +8,15 @@
     name: "{{ item }}"
     state: stopped
     enabled: false
-  loop: "{{ ['linstor-controller', 'linstor-satellite'] | select('in', linstor_known_units) | list }}"
+  loop: >-
+    {{ ((['drbd-reactor'] if linstor_controller_ha else []) + ['linstor-controller', 'linstor-satellite'])
+       | select('in', linstor_known_units) | list }}
   vars:
     linstor_known_units: "{{ ansible_facts.services.keys() | map('regex_replace', '[.]service$', '') | list }}"
 
 - name: LINSTOR packages are purged
   ansible.builtin.apt:
-    name: "{{ linstor_all_packages + linstor_packages_extra }}"
+    name: "{{ linstor_all_packages + (['drbd-reactor'] if linstor_controller_ha else []) + linstor_packages_extra }}"
     state: absent
     purge: true
 
@@ -23,5 +25,7 @@
     path: "{{ item }}"
     state: absent
   loop: >-
-    {{ [linstor_ssl_dir, linstor_satellite_conf, linstor_controller_conf, linstor_client_config]
+    {{ [linstor_ssl_dir, linstor_satellite_conf, linstor_controller_conf, linstor_client_config,
+        linstor_ha_mount_unit, linstor_ha_promoter, linstor_satellite_dropin]
        + ([linstor_data_dir] if linstor_remove_data else []) }}
+  notify: Reload systemd

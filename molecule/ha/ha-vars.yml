@@ -1,0 +1,4 @@
+---
+# Controller HA on: every node of ha_controllers controller-capable, drbd-reactor in charge of the controller
+linstor_controller_ha: true
+linstor_controller: "{{ inventory_hostname in groups['ha_controllers'] }}"

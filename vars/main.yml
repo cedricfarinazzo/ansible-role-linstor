@@ -18,13 +18,22 @@ linstor_satellite_trust: "{{ linstor_satellite_truststore if linstor_tls_control
 
 linstor_packages: >-
   {{ (['linstor-satellite'] if linstor_satellite else []) + (['linstor-controller'] if linstor_controller else [])
-     + (['linstor-client'] if linstor_client else []) + linstor_packages_extra }}
+     + (['linstor-client'] if linstor_client else []) + (['drbd-reactor'] if linstor_ha_controller else [])
+     + linstor_packages_extra }}
 linstor_all_packages:
   - linstor-satellite
   - linstor-controller
   - linstor-client
+# Under HA drbd-reactor, not the role, starts the controller: it is never enabled nor started as a plain service
+linstor_ha_controller: "{{ linstor_controller_ha and linstor_controller }}"
 linstor_services: >-
-  {{ (['linstor-satellite'] if linstor_satellite else []) + (['linstor-controller'] if linstor_controller else []) }}
+  {{ (['linstor-satellite'] if linstor_satellite else [])
+     + (['drbd-reactor'] if linstor_ha_controller else ['linstor-controller'] if linstor_controller else []) }}
+linstor_controller_here: >-
+  {{ not linstor_ha_controller or (linstor_controller_state.status.ActiveState | default('') == 'active') }}
+linstor_ha_mount_unit: /etc/systemd/system/var-lib-linstor.mount
+linstor_ha_promoter: /etc/drbd-reactor.d/{{ linstor_controller_ha_resource }}.toml
+linstor_satellite_dropin: /etc/systemd/system/linstor-satellite.service.d/50-linstor-role.conf
 
 linstor_store_pass: "{{ linstor_tls_store_password or (linstor_password_read.content | default('') | b64decode | trim) }}"
 linstor_api: >-
@@ -69,8 +78,13 @@ linstor_node_netif:
   satellite_encryption_type: "{{ linstor_node_encryption | upper }}"
 linstor_rg_filter: >-
   {{ ({'place_count': item.place_count | int} if item.place_count is defined else {})
-     | combine({'storage_pool_list': item.storage_pools} if item.storage_pools | default([]) | length > 0 else {}) }}
+     | combine({'storage_pool_list': item.storage_pools} if item.storage_pools | default([]) | length > 0 else {})
+     | combine({'diskless_on_remaining': item.diskless_on_remaining} if item.diskless_on_remaining is defined else {}) }}
 linstor_rg_props: >-
+  {{ dict((item.drbd_options | default({})).keys() | map('regex_replace', '^', 'DrbdOptions/')
+          | zip((item.drbd_options | default({})).values() | map('string')))
+     | combine(dict((item.properties | default({})).keys() | zip((item.properties | default({})).values() | map('string')))) }}
+linstor_rd_props: >-
   {{ dict((item.drbd_options | default({})).keys() | map('regex_replace', '^', 'DrbdOptions/')
           | zip((item.drbd_options | default({})).values() | map('string')))
      | combine(dict((item.properties | default({})).keys() | zip((item.properties | default({})).values() | map('string')))) }}

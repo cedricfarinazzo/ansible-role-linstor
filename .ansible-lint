@@ -8,3 +8,6 @@ exclude_paths:
   - .github/
   - .venv/
   - node_modules/
+# Extra vars a scenario passes with -e @file, not a playbook
+kinds:
+  - vars: "molecule/ha/ha-vars.yml"

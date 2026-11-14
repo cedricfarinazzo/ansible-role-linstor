@@ -12,6 +12,7 @@ show_usage() {
     echo "Scenarios: default (a combined node over mutual TLS, pool and resource group, idempotence, then state absent),"
     echo "cluster (a combined node and a satellite in two containers, mutual TLS across the network),"
     echo "plain (a combined node without TLS: plain satellite and REST API, no store),"
+    echo "ha (three nodes: one controller, then controller HA by drbd-reactor on two; quorum group, tiebreaker, pins),"
     echo "failure (a missing certificate, a key that does not match, a certificate from another CA, no package source: the role must stop)."
     echo "Several distributions, or 'all', run in parallel; each writes .molecule-logs/<distro>.log."
     echo
@@ -24,6 +25,7 @@ show_usage() {
     echo "  $0 -s failure debian13   # the failure paths"
     echo "  $0 -s cluster debian13   # two nodes"
     echo "  $0 -s plain debian13     # without TLS"
+    echo "  $0 -s ha debian13        # three nodes, controller HA"
 }
 
 if [[ ${1:-} == -h || ${1:-} == --help ]]; then show_usage; exit 0; fi

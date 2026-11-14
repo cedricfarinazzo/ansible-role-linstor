@@ -1,0 +1,143 @@
+---
+dependency:
+  # Into the scenario's ephemeral directory, put on the roles path below; never ~/.ansible
+  name: shell
+  command: >-
+    sh -c 'ansible-galaxy collection install -r "$MOLECULE_SCENARIO_DIRECTORY/collections.yml"
+    && ansible-galaxy role install --force -r "$MOLECULE_SCENARIO_DIRECTORY/requirements.yml"
+    -p "$MOLECULE_EPHEMERAL_DIRECTORY/roles"'
+driver:
+  name: docker
+# Three nodes: two controller-capable combined nodes with a disk each, a diskless tiebreaker satellite
+platforms:
+  - name: ha-a-${MOLECULE_DISTRO:-debian13}
+    hostname: linstor-a
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: linstor-ha-${MOLECULE_DISTRO:-debian13}
+    groups:
+      - ha_controllers
+  - name: ha-b-${MOLECULE_DISTRO:-debian13}
+    hostname: linstor-b
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: linstor-ha-${MOLECULE_DISTRO:-debian13}
+    groups:
+      - ha_controllers
+  - name: ha-c-${MOLECULE_DISTRO:-debian13}
+    hostname: linstor-c
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    networks:
+      - name: linstor-ha-${MOLECULE_DISTRO:-debian13}
+provisioner:
+  name: ansible
+  env:
+    # Molecule does not add it: without it only a developer's ~/.ansible/roles hides the missing role
+    ANSIBLE_ROLES_PATH: ${MOLECULE_EPHEMERAL_DIRECTORY}/roles
+  playbooks:
+    prepare: prepare/playbook.yml
+    converge: converge/playbook.yml
+    verify: verify/playbook.yml
+    side_effect: side_effect/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+        # Converge: the single controller a two-node cluster starts with, on the first node; side_effect turns HA
+        # on (ha-vars.yml), every node of ha_controllers controller-capable
+        molecule_controller: "{{ groups['ha_controllers'] | first }}"
+        linstor_controller: "{{ inventory_hostname == molecule_controller }}"
+        linstor_client: "{{ inventory_hostname in groups['ha_controllers'] }}"
+        linstor_client_controllers: >-
+          {{ groups['ha_controllers'] | map('extract', hostvars, ['ansible_facts', 'default_ipv4', 'address'])
+             | map('regex_replace', '^', 'linstor+ssl://') | join(':3371,') }}:3371
+        linstor_tls: true
+        linstor_tls_cert: /root/pki/node.crt
+        linstor_tls_key: /root/pki/node.key
+        linstor_tls_ca: /root/pki/ca.crt
+        # The same on every controller: the connector's store password lives in the shared database
+        linstor_tls_store_password: molecule-ha-store-password
+        # Every satellite accepts each controller-capable node's certificate, not the tiebreaker's
+        linstor_tls_controller_certs:
+          - /root/pki/controller-linstor-a.crt
+          - /root/pki/controller-linstor-b.crt
+        molecule_node:
+          name: "{{ ansible_facts.hostname }}"
+          address: "{{ ansible_facts.default_ipv4.address }}"
+          type: "{{ 'combined' if inventory_hostname in groups['ha_controllers'] else 'satellite' }}"
+        linstor_nodes: "{{ groups['all'] | map('extract', hostvars) | map(attribute='molecule_node') | list }}"
+        linstor_storage_pools:
+          - name: pool-file
+            node: linstor-a
+            provider: file_thin
+            pool: /srv/linstor-pool
+          - name: pool-file
+            node: linstor-b
+            provider: file_thin
+            pool: /srv/linstor-pool
+          - name: pool-diskless
+            node: linstor-c
+            provider: diskless
+        linstor_resource_groups:
+          # Two copies on disk; LINSTOR adds a diskless tiebreaker on the third node for quorum
+          - name: rg-vm
+            place_count: 2
+            storage_pools:
+              - pool-file
+            drbd_options:
+              Resource/quorum: majority
+              Resource/on-no-quorum: suspend-io
+              auto-add-quorum-tiebreaker: "true"
+          # LINBIT's controller database group: quorum, io-error on its loss, no auto-promote (drbd-reactor promotes)
+          - name: linstor-db-grp
+            place_count: 2
+            storage_pools:
+              - pool-file
+            diskless_on_remaining: true
+            drbd_options:
+              Resource/auto-promote: "no"
+              Resource/quorum: majority
+              Resource/on-no-quorum: io-error
+              Resource/on-no-data-accessible: io-error
+              Resource/on-suspended-primary-outdated: force-secondary
+              Net/rr-conflict: retry-connect
+              auto-add-quorum-tiebreaker: "true"
+        # A container has no DRBD module: defined, never placed
+        linstor_resource_definitions:
+          - name: linstor_db
+            resource_group: linstor-db-grp
+            size_mib: 200
+            place: false
+verifier:
+  name: ansible
+scenario:
+  name: ha
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - check
+    - converge
+    - verify
+    - idempotence
+    - side_effect
+    - destroy

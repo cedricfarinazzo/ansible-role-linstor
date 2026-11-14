@@ -1,0 +1,118 @@
+---
+# Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: Verify the three-node cluster from the controller
+  hosts: ha_controllers[0]
+  gather_facts: false
+  tasks:
+    - name: Three nodes online over SSL, the pools, the groups with place-count and quorum, the database definition
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for i in $(seq 30); do
+          n=$(linstor -m node list)
+          [ "$(jq '[.[0][] | select(.connection_status == "ONLINE")] | length' <<<"$n")" = 3 ] && break; sleep 3
+        done
+        for h in linstor-a:COMBINED linstor-b:COMBINED linstor-c:SATELLITE; do
+          jq -e --arg n "${h%%:*}" --arg t "${h##*:}" '.[0][] | select(.name == $n and .type == $t
+            and .connection_status == "ONLINE") | .net_interfaces[] | select(.satellite_encryption_type == "SSL"
+            and .satellite_port == 3367)' <<<"$n" > /dev/null || fail "$h: $n"
+        done
+        p=$(linstor -m storage-pool list)
+        [ "$(jq '[.[0][] | select(.storage_pool_name == "pool-file" and .provider_kind == "FILE_THIN")] | length' <<<"$p")" = 2 ] \
+          || fail "file pools: $p"
+        jq -e '.[0][] | select(.storage_pool_name == "pool-diskless" and .node_name == "linstor-c"
+          and .provider_kind == "DISKLESS")' <<<"$p" > /dev/null || fail "diskless pool: $p"
+        r=$(linstor -m resource-group list)
+        jq -e '.[0][] | select(.name == "rg-vm" and .select_filter.place_count == 2
+          and .props["DrbdOptions/Resource/quorum"] == "majority"
+          and .props["DrbdOptions/auto-add-quorum-tiebreaker"] == "true")' <<<"$r" > /dev/null || fail "rg-vm: $r"
+        jq -e '.[0][] | select(.name == "linstor-db-grp" and .select_filter.place_count == 2
+          and .select_filter.diskless_on_remaining == true
+          and .props["DrbdOptions/Resource/auto-promote"] == "no"
+          and .props["DrbdOptions/Resource/on-no-quorum"] == "io-error"
+          and .props["DrbdOptions/Resource/on-suspended-primary-outdated"] == "force-secondary")' <<<"$r" > /dev/null \
+          || fail "linstor-db-grp: $r"
+        d=$(linstor -m resource-definition list)
+        jq -e '.[0][] | select(.name == "linstor_db" and .resource_group_name == "linstor-db-grp")' <<<"$d" > /dev/null \
+          || fail "linstor_db: $d"
+        v=$(linstor -m volume-definition list -r linstor_db)
+        jq -e '[.. | objects | select(.size_kib? == 204800)] | length == 1' <<<"$v" > /dev/null || fail "linstor_db size: $v"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Every satellite pins each controller-capable node and refuses any other peer
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: The satellite trust store holds the certificates of a and b, not the tiebreaker's
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        t=$(keytool -list -keystore /etc/linstor/ssl/satellite-trust.jks -storepass molecule-ha-store-password) || fail "unreadable"
+        for c in /root/pki/controller-linstor-a.crt /root/pki/controller-linstor-b.crt; do
+          grep -q "$(openssl x509 -noout -fingerprint -sha256 -in $c | cut -d= -f2)" <<<"$t" || fail "$c not pinned"
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # The tiebreaker holds a valid certificate of the CA: no satellite may accept it
+    - name: Each satellite refuses the tiebreaker's certificate, another CA's and none
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        probe() { (sleep 3) | timeout 8 openssl s_client -connect "$1":3367 -CAfile /root/pki/ca.crt "${@:2}" 2>&1; }
+        for ip in {{ groups['all'] | map('extract', hostvars, ['ansible_facts', 'default_ipv4', 'address']) | join(' ') }}; do
+          o=$(probe $ip -cert /root/pki/node.crt -key /root/pki/node.key -cert_chain /root/pki/ca.crt)
+          grep -q 'unexpected eof' <<<"$o" || fail "$ip accepted the tiebreaker's certificate"
+          o=$(probe $ip -cert /root/pki/rogue.crt -key /root/pki/rogue.key); grep -q 'unexpected eof' <<<"$o" || fail "$ip accepted another CA"
+          o=$(probe $ip); grep -q 'unexpected eof' <<<"$o" || fail "$ip accepted no certificate"
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: inventory_hostname not in groups['ha_controllers']
+
+# The standby controller's certificate is accepted (the takeover a failover needs); the probe takes the session, so
+# the tiebreaker's satellite restarts and comes back to the active controller
+- name: The tiebreaker's satellite accepts the standby controller's certificate
+  hosts: ha_controllers[-1]
+  gather_facts: true
+  tasks:
+    - name: Probe the tiebreaker's satellite with the standby's certificate
+      ansible.builtin.shell: |
+        set -o pipefail
+        o=$( (sleep 3) | timeout 8 openssl s_client -connect {{ molecule_c_ip }}:3367 -CAfile /root/pki/ca.crt \
+          -cert /root/pki/node.crt -key /root/pki/node.key -cert_chain /root/pki/ca.crt 2>&1)
+        if grep -q 'unexpected eof' <<<"$o"; then echo "FAIL: the standby controller's certificate was refused"; exit 1; fi
+        grep -q CONNECTED <<<"$o" || { echo "FAIL: no connection: $o"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+      vars:
+        molecule_c_ip: "{{ hostvars[groups['all'] | difference(groups['ha_controllers']) | first]['ansible_facts']['default_ipv4']['address'] }}"
+
+- name: The tiebreaker comes back after a restart of its satellite
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Restart the tiebreaker's satellite
+      ansible.builtin.systemd_service:
+        name: linstor-satellite
+        state: restarted
+      changed_when: false
+      when: inventory_hostname not in groups['ha_controllers']
+
+    - name: All three nodes online
+      ansible.builtin.shell: |
+        set -o pipefail
+        for i in $(seq 40); do
+          [ "$(linstor -m node list | jq '[.[0][] | select(.connection_status == "ONLINE")] | length')" = 3 ] && exit 0
+          sleep 3
+        done
+        echo "FAIL: $(linstor node list)"; exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: inventory_hostname == groups['ha_controllers'] | first

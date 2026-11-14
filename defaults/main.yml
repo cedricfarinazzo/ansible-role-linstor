@@ -56,11 +56,28 @@ linstor_nodes: []
 # Each {name, node, provider: lvm|lvm_thin|zfs|zfs_thin|file|file_thin|diskless, pool: <vg>, <vg>/<thinpool>, <zpool>
 # or <directory> (not for diskless), properties: {}}
 linstor_storage_pools: []
-# Each {name, place_count, storage_pools: [], drbd_options: {<section>/<option>: value} set as DrbdOptions/<key>,
+# Each {name, place_count, storage_pools: [], diskless_on_remaining, drbd_options: {<section>/<option>: value} set as DrbdOptions/<key>,
 # properties: {}, description}. DRBD options take DRBD's base units (c-max-rate in KiB/s: 70M = 71680)
 linstor_resource_groups: []
+# Each {name, resource_group, size_mib, place: true, drbd_options: {}, properties: {}}: spawned from the group (which
+# must be in linstor_resource_groups or exist), then auto-placed by its filter unless place is false. Size at creation only
+linstor_resource_definitions: []
 # Tries, 5 s apart, for the API to answer and each node with a storage pool to come online
 linstor_wait_retries: 36
 
 # absent: also remove the controller database and satellite state under /var/lib/linstor
 linstor_remove_data: false
+
+# Controller HA, LINBIT's model: the controller database (H2 under /var/lib/linstor) lives on the DRBD resource below;
+# drbd-reactor mounts it and starts the controller on the node where it is Primary. Same value on every node of the
+# cluster; controller-capable nodes have linstor_controller true. Enable it only after the migration in README
+linstor_controller_ha: false
+linstor_controller_ha_resource: linstor_db
+linstor_controller_ha_fstype: ext4
+linstor_controller_ha_mount_options: defaults
+# Promoter's on-stop-failure command ("" = none) and stop-services-on-exit
+linstor_controller_ha_on_stop_failure: ""
+linstor_controller_ha_stop_services_on_exit: true
+# Resources the satellite keeps though the controller does not know them (LS_KEEP_RES; LINSTOR before 1.32 deletes
+# the controller database's resource file otherwise)
+linstor_satellite_keep_resources: "{{ [linstor_controller_ha_resource] if linstor_controller_ha else [] }}"

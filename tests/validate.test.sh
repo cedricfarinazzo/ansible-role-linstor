@@ -141,5 +141,44 @@ bad "a DRBD option with its prefix" '{"linstor_resource_groups": [{"name": "rg",
 bad "DRBD options as a list" '{"linstor_resource_groups": [{"name": "rg", "drbd_options": ["Net/tls"]}]}'
 bad "a group with an unknown key" '{"linstor_resource_groups": [{"name": "rg", "replicas": 2}]}'
 
+# Controller HA, N nodes, resource definitions
+HA="{$T, \"linstor_controller_ha\": true, \"linstor_tls_store_password\": \"abcdefghijkl\", \"linstor_controller\": true, \"linstor_client_controllers\": \"linstor+ssl://10.0.0.1:3371,linstor+ssl://10.0.0.2:3371\"}"
+good "an HA controller-capable node" "$HA"
+good "an HA tiebreaker satellite" '{"linstor_controller_ha": true}'
+good "HA with every option" "{$T, \"linstor_controller_ha\": true, \"linstor_tls_store_password\": \"abcdefghijkl\", \"linstor_controller\": true, \"linstor_client_controllers\": \"linstor+ssl://10.0.0.1:3371,linstor+ssl://10.0.0.2:3371\", \"linstor_controller_ha_resource\": \"ctrl_db\", \"linstor_controller_ha_fstype\": \"xfs\", \"linstor_controller_ha_mount_options\": \"noatime,nodev\", \"linstor_controller_ha_on_stop_failure\": \"echo b > /proc/sysrq-trigger\", \"linstor_controller_ha_stop_services_on_exit\": false, \"linstor_satellite_keep_resources\": [\"ctrl_db\", \"other\"]}"
+good "a group placing diskless on the remaining nodes" '{"linstor_resource_groups": [{"name": "db", "place_count": 2, "diskless_on_remaining": true, "drbd_options": {"Resource/quorum": "majority", "auto-add-quorum-tiebreaker": "true"}}]}'
+good "a resource definition" '{"linstor_resource_definitions": [{"name": "linstor_db", "resource_group": "db", "size_mib": 200, "place": false, "drbd_options": {"Resource/auto-promote": "no"}, "properties": {"Aux/x": "y"}}]}'
+bad "HA as a string" '{"linstor_controller_ha": "yes"}'
+bad "an HA controller with an external database" "{$T, \"linstor_controller_ha\": true, \"linstor_tls_store_password\": \"abcdefghijkl\", \"linstor_controller\": true, \"linstor_client_controllers\": \"linstor+ssl://10.0.0.1:3371,linstor+ssl://10.0.0.2:3371\", \"linstor_controller_db_connection_url\": \"jdbc:postgresql://db/x\"}"
+bad "an HA TLS controller with a generated store password" "{$T, \"linstor_controller_ha\": true, \"linstor_controller\": true, \"linstor_client_controllers\": \"linstor+ssl://10.0.0.1:3371,linstor+ssl://10.0.0.2:3371\"}"
+bad "an HA client without the controller list" "{$T, \"linstor_controller_ha\": true, \"linstor_tls_store_password\": \"abcdefghijkl\", \"linstor_controller\": true}"
+bad "an HA resource with a trailing newline" '{"linstor_controller_ha_resource": "linstor_db\n"}'
+bad "an HA resource with an embedded newline" '{"linstor_controller_ha_resource": "linstor\n_db"}'
+bad "an HA resource with a slash" '{"linstor_controller_ha_resource": "../db"}'
+bad "an unknown HA filesystem" '{"linstor_controller_ha_fstype": "btrfs"}'
+bad "HA mount options with a trailing newline" '{"linstor_controller_ha_mount_options": "defaults\n"}'
+bad "HA mount options with an embedded CR" '{"linstor_controller_ha_mount_options": "noatime\rWhat=/dev/sda"}'
+bad "an on-stop-failure with a trailing newline" '{"linstor_controller_ha_on_stop_failure": "reboot\n"}'
+bad "an on-stop-failure with an embedded newline" '{"linstor_controller_ha_on_stop_failure": "reboot\nstart = []"}'
+bad "an on-stop-failure with a quote" '{"linstor_controller_ha_on_stop_failure": "echo \"b\""}'
+bad "stop-services-on-exit as a string" '{"linstor_controller_ha_stop_services_on_exit": "yes"}'
+bad "keep resources as a string" '{"linstor_satellite_keep_resources": "linstor_db"}'
+bad "a kept resource with a trailing newline" '{"linstor_satellite_keep_resources": ["linstor_db\n"]}'
+bad "a kept resource with an embedded newline" '{"linstor_satellite_keep_resources": ["a\nLS_X=b"]}'
+bad "diskless on remaining as a string" '{"linstor_resource_groups": [{"name": "rg", "diskless_on_remaining": "yes"}]}'
+bad "resource definitions as a mapping" '{"linstor_resource_definitions": {"name": "r"}}'
+bad "a resource definition without a group" '{"linstor_resource_definitions": [{"name": "r", "size_mib": 1}]}'
+bad "a resource definition without a size" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g"}]}'
+bad "a resource definition of size 0" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 0}]}'
+bad "a resource definition with a size in units" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": "200M"}]}'
+bad "a resource definition name with a trailing newline" '{"linstor_resource_definitions": [{"name": "r\n", "resource_group": "g", "size_mib": 1}]}'
+bad "a resource definition group with an embedded newline" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g\nh", "size_mib": 1}]}'
+bad "a resource definition place as a string" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1, "place": "no"}]}'
+bad "a resource definition DRBD option with its prefix" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1, "drbd_options": {"DrbdOptions/Net/tls": "yes"}}]}'
+bad "a resource definition DRBD option value with an embedded newline" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1, "drbd_options": {"Resource/quorum": "majority\nx"}}]}'
+bad "a resource definition property key with a trailing newline" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1, "properties": {"Aux/x\n": "y"}}]}'
+bad "a resource definition twice" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1}, {"name": "r", "resource_group": "g", "size_mib": 2}]}'
+bad "a resource definition with an unknown key" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1, "replicas": 3}]}'
+
 if [[ $fails -gt 0 ]]; then echo "$fails failed" >&2; exit 1; fi
 echo "all passed"
