@@ -31,11 +31,30 @@ bad() {
 T='"linstor_tls": true, "linstor_tls_cert": "/etc/ssl/node.crt", "linstor_tls_key": "/etc/ssl/node.key", "linstor_tls_ca": "/etc/ssl/ca.crt"'
 good "defaults (a plain satellite)" '{}'
 good "state absent, nothing selected" '{"linstor_state": "absent", "linstor_satellite": false}'
+good "a pinned controller certificate" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl/ctrl.crt\"]}"
 good "a combined node over TLS" "{$T, \"linstor_controller\": true}"
 good "a client only" '{"linstor_satellite": false, "linstor_client": true, "linstor_client_controllers": "linstor+ssl://ctrl.example.com:3371,linstor+ssl://ctrl2.example.com"}'
 good "every option set" "{$T, \"linstor_controller\": true, \"linstor_packages_extra\": [\"drbd-reactor\"], \"linstor_controller_db_connection_url\": \"jdbc:postgresql://db.example.com/linstor\", \"linstor_controller_db_user\": \"linstor\", \"linstor_controller_db_password\": \"s3cret pass\", \"linstor_tls_protocol\": \"TLSv1.2\", \"linstor_tls_store_password\": \"abcdefghijkl\", \"linstor_satellite_bind_address\": \"10.0.0.1\", \"linstor_controller_http_listen\": \"::1\", \"linstor_api_url\": \"https://10.0.0.1:3371\", \"linstor_wait_retries\": 10, \"linstor_remove_data\": true}"
 good "an etcd database" '{"linstor_controller": true, "linstor_controller_db_connection_url": "etcd://etcd1.example.com:2379"}'
 good "a cluster" '{"linstor_controller": true, "linstor_nodes": [{"name": "node-a", "address": "10.0.0.1", "type": "combined"}, {"name": "node-b", "address": "10.0.0.2", "encryption": "plain", "port": 3366}], "linstor_storage_pools": [{"name": "pool", "node": "node-a", "provider": "lvm_thin", "pool": "vg/thin"}, {"name": "pool", "node": "node-b", "provider": "zfs", "pool": "tank", "properties": {"PrefNic": "data"}}, {"name": "nodisk", "node": "node-b", "provider": "diskless"}], "linstor_resource_groups": [{"name": "rg", "place_count": 2, "storage_pools": ["pool"], "drbd_options": {"PeerDevice/c-max-rate": 71680, "Net/tls": "yes"}, "properties": {"Aux/team": "a"}, "description": "VM disks"}]}'
+bad "a database password with a newline" '{"linstor_controller_db_password": "abc\ndef"}'
+bad "a database password with a backslash" '{"linstor_controller_db_password": "abc\\ndef"}'
+bad "a database user with a trailing newline" '{"linstor_controller_db_user": "linstor\n"}'
+bad "a database URL with a trailing newline" '{"linstor_controller_db_connection_url": "jdbc:postgresql://db/x\n"}'
+bad "a store password with a trailing newline" '{"linstor_tls_store_password": "abcdefghijkl\n"}'
+bad "a listen address with a trailing newline" '{"linstor_controller_http_listen": "127.0.0.1\n"}'
+bad "a port with a trailing newline" '{"linstor_satellite_port": "3367\n"}'
+bad "a client config path with a trailing newline" '{"linstor_client_config": "/etc/linstor/c.conf\n"}'
+bad "a node name with a trailing newline" '{"linstor_nodes": [{"name": "a\n", "address": "10.0.0.1"}]}'
+bad "a node address with a trailing newline" '{"linstor_nodes": [{"name": "a", "address": "10.0.0.1\n"}]}'
+bad "a pool with a trailing newline" '{"linstor_storage_pools": [{"name": "p", "node": "a", "provider": "lvm", "pool": "vg\n"}]}'
+bad "a group name with a trailing newline" '{"linstor_resource_groups": [{"name": "rg\n"}]}'
+bad "a TLS file path with a trailing newline" "{$T, \"linstor_tls_cert\": \"/etc/ssl/node.crt\\n\"}"
+bad "controller certificates as a string" "{$T, \"linstor_tls_controller_certs\": \"/etc/ssl/c.crt\"}"
+bad "controller certificates as a mapping" "{$T, \"linstor_tls_controller_certs\": {\"a\": \"/etc/ssl/c.crt\"}}"
+bad "a relative controller certificate" "{$T, \"linstor_tls_controller_certs\": [\"c.crt\"]}"
+bad "a controller certificate with a trailing newline" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl/c.crt\\n\"]}"
+bad "controller certificates without TLS" '{"linstor_tls_controller_certs": ["/etc/ssl/c.crt"]}'
 bad "an unknown state" '{"linstor_state": "latest"}'
 bad "satellite as a string" '{"linstor_satellite": "yes"}'
 bad "nothing selected" '{"linstor_satellite": false}'

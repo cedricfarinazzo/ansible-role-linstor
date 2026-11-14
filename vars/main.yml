@@ -5,11 +5,16 @@ linstor_ssl_dir: /etc/linstor/ssl
 linstor_keystore: /etc/linstor/ssl/keystore.jks
 linstor_truststore: /etc/linstor/ssl/certificates.jks
 linstor_password_file: /etc/linstor/ssl/store.password
+# Satellite trust store holding only linstor_tls_controller_certs, with the sha256 its content was built from
+linstor_satellite_truststore: /etc/linstor/ssl/satellite-trust.jks
+linstor_satellite_trust_stamp: /etc/linstor/ssl/satellite-trust.sha256
 # sha256 of the certificate, key and CA the stores were built from: a change rebuilds them
 linstor_stores_stamp: /etc/linstor/ssl/stores.sha256
 linstor_satellite_conf: /etc/linstor/linstor_satellite.toml
 linstor_controller_conf: /etc/linstor/linstor.toml
 linstor_data_dir: /var/lib/linstor
+
+linstor_satellite_trust: "{{ linstor_satellite_truststore if linstor_tls_controller_certs | length > 0 else linstor_truststore }}"
 
 linstor_packages: >-
   {{ (['linstor-satellite'] if linstor_satellite else []) + (['linstor-controller'] if linstor_controller else [])

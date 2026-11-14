@@ -5,7 +5,7 @@
   port = {{ linstor_satellite_port }}
 {% if linstor_tls %}
   server_certificate = "{{ linstor_keystore }}"
-  trusted_certificates = "{{ linstor_truststore }}"
+  trusted_certificates = "{{ linstor_satellite_trust }}"
   key_password = "{{ linstor_store_pass }}"
   keystore_password = "{{ linstor_store_pass }}"
   truststore_password = "{{ linstor_store_pass }}"

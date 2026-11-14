@@ -19,7 +19,7 @@
         done
         # Group linstor is the dynamic user of the controller; nobody else reads them
         for f in /etc/linstor/linstor.toml /etc/linstor/linstor_satellite.toml \
-          /etc/linstor/ssl/keystore.jks /etc/linstor/ssl/certificates.jks; do
+          /etc/linstor/ssl/keystore.jks /etc/linstor/ssl/certificates.jks /etc/linstor/ssl/satellite-trust.jks; do
           [ "$(stat -c '%U %a' $f)" = "root 640" ] || fail "$f: $(stat -c '%U %a' $f)"
         done
         [ "$(stat -c '%U %a' /etc/linstor/ssl/store.password)" = "root 600" ] || fail "password file mode"
@@ -37,7 +37,7 @@
         grep -qx '  port = 3367' $s || fail "satellite port"
         grep -qx '  ssl_protocol = "TLSv1.3"' $s || fail "satellite protocol"
         grep -qx '  server_certificate = "/etc/linstor/ssl/keystore.jks"' $s || fail "satellite keystore"
-        grep -qx '  trusted_certificates = "/etc/linstor/ssl/certificates.jks"' $s || fail "satellite truststore"
+        grep -qx '  trusted_certificates = "/etc/linstor/ssl/satellite-trust.jks"' $s || fail "satellite truststore"
         p=$(cat /etc/linstor/ssl/store.password); grep -qx "  keystore_password = \"$p\"" $s || fail "satellite password"
         sed -n '/^\[http\]/,/^\[/p' $c | grep -qx '  listen_addr = "127.0.0.1"' || fail "http listen"
         sed -n '/^\[https\]/,$p' $c | grep -qx '  enabled = true' || fail "https enabled"
@@ -46,7 +46,7 @@
         executable: /bin/bash
       changed_when: false
 
-    - name: The key store holds the node key and certificate chain, the trust store the CA only
+    - name: The key store holds the node key and certificate chain, the trust store the CA, the satellite trust store the controller certificate
       ansible.builtin.shell: |
         set -o pipefail
         fail() { echo "FAIL: $*"; exit 1; }
@@ -57,6 +57,14 @@
         [ "$(grep -c trustedCertEntry <<<"$t")" = 1 ] || fail "truststore: $t"
         f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/ca.crt | cut -d= -f2)
         grep -q "$f" <<<"$t" || fail "truststore does not hold the CA"
+        # The satellite trusts the controller certificate only, never the CA
+        t=$(keytool -list -keystore /etc/linstor/ssl/satellite-trust.jks -storepass "$p") || fail "satellite trust store unreadable"
+        # The controller certificate and the throwaway anchor named like its issuer, never the CA itself
+        [ "$(grep -c trustedCertEntry <<<"$t")" = 2 ] || fail "satellite trust store: $t"
+        f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/node.crt | cut -d= -f2)
+        grep -q "$f" <<<"$t" || fail "satellite trust store does not hold the controller certificate"
+        f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/ca.crt | cut -d= -f2)
+        if grep -q "$f" <<<"$t"; then fail "satellite trust store holds the CA"; fi
       args:
         executable: /bin/bash
       changed_when: false
@@ -123,15 +131,16 @@
         executable: /bin/bash
       changed_when: false
 
-    # The satellite drops a TLS peer without a certificate of the CA right after the handshake. A node of the CA is
-    # proven by the controller's SSL session; a second one from openssl would take the satellite from the controller
-    - name: The satellite 3367 refuses a peer without a certificate or with another CA's, and keeps its controller
+    # The satellite drops a TLS peer that is not its pinned controller right after the handshake, even with a valid
+    # certificate of the CA (peer.crt): an accepted peer would take the satellite from the controller
+    - name: The satellite 3367 refuses a peer without a certificate, with another CA's or with a valid one of the CA, and keeps its controller
       ansible.builtin.shell: |
         set -o pipefail
         fail() { echo "FAIL: $*"; exit 1; }
         probe() { (sleep 3) | timeout 8 openssl s_client -connect 127.0.0.1:3367 -CAfile /root/pki/ca.crt "$@" 2>&1; }
         o=$(probe); grep -q 'unexpected eof' <<<"$o" || fail "accepted without a certificate"
         o=$(probe -cert /root/pki/rogue.crt -key /root/pki/rogue.key); grep -q 'unexpected eof' <<<"$o" || fail "accepted another CA"
+        o=$(probe -cert /root/pki/peer.crt -key /root/pki/peer.key -cert_chain /root/pki/ca.crt); grep -q 'unexpected eof' <<<"$o" || fail "accepted a node of the CA that is not the controller"
         sleep 20
         linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
           > /dev/null || fail "the refused peers took the node offline"

@@ -15,8 +15,9 @@
     dest: "{{ linstor_satellite_conf }}"
     owner: root
     mode: "0640"
-  # Holds the store password: never in --diff output
+  # Holds the store password: never in --diff output or a task result
   diff: false
+  no_log: true
   notify: Restart LINSTOR
   when: linstor_satellite and not (ansible_check_mode and linstor_conf_dir_made is changed)
 
@@ -27,6 +28,7 @@
     owner: root
     mode: "0640"
   diff: false
+  no_log: true
   notify: Restart LINSTOR
   when: linstor_controller and not (ansible_check_mode and linstor_conf_dir_made is changed)
 

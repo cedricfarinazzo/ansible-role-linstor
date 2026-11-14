@@ -63,6 +63,25 @@
         executable: /bin/bash
       changed_when: false
 
+# The node that is not the controller holds a valid certificate of the CA: it must not take the controller's
+# satellite from the controller, and the controller reaches it still
+- name: A valid certificate of the CA that is not the controller's is refused by the satellite
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: The satellite of the controller refuses the other node's certificate
+      ansible.builtin.shell: |
+        set -o pipefail
+        o=$( (sleep 3) | timeout 8 openssl s_client -connect {{ molecule_ctrl_ip }}:3367 -CAfile /root/pki/ca.crt \
+          -cert /root/pki/node.crt -key /root/pki/node.key -cert_chain /root/pki/ca.crt 2>&1)
+        grep -q 'unexpected eof' <<<"$o" || { echo "FAIL: the controller's satellite accepted the certificate of {{ inventory_hostname }}"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+      vars:
+        molecule_ctrl_ip: "{{ hostvars[molecule_controller]['ansible_facts']['default_ipv4']['address'] }}"
+      when: inventory_hostname != molecule_controller
+
 - name: The refused peers left both nodes online
   hosts: controllers
   gather_facts: false

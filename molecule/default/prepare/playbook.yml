@@ -31,7 +31,8 @@
         state: directory
         mode: "0700"
 
-    # A test CA, the node's certificate (server and client) and a rogue one from another CA
+    # A test CA, the node's certificate (server and client), a second node's certificate of the same CA (peer) and
+    # a rogue one from another CA
     - name: Make the test certificates
       ansible.builtin.shell: |
         set -euo pipefail
@@ -42,6 +43,8 @@
         openssl req $ec -keyout node.key -out node.csr -subj "/CN=linstor-node"
         printf 'subjectAltName=DNS:linstor-node,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nkeyUsage=critical,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n' > ext
         openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 30 -extfile ext
+        openssl req $ec -keyout peer.key -out peer.csr -subj "/CN=peer"
+        openssl x509 -req -in peer.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out peer.crt -days 30 -extfile ext
         openssl req -x509 $ec -keyout rogue.key -out rogue.crt -days 30 -subj "/CN=rogue" -addext subjectAltName=DNS:localhost
         chmod 0600 ./*.key
       args:

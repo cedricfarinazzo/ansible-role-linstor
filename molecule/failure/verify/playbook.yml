@@ -19,6 +19,9 @@
         expect mismatch 'The certificate is usable' 'the key does not match the certificate'
         expect other-ca 'The certificate is usable' 'the certificate is not signed by the CA'
         expect expired 'The certificate is usable' 'the certificate has expired'
+        expect pin-missing 'The controller certificates are usable' 'missing: /root/pki/missing.crt'
+        expect pin-other-ca 'The controller certificates are usable' 'not signed by the CA: /root/pki/rogue.crt'
+        expect pin-expired 'The controller certificates are usable' 'the certificate has expired: /root/pki/expired.crt'
         expect no-source 'Every package has a source' 'No configured APT source provides linstor-satellite'
       args:
         executable: /bin/bash

@@ -21,6 +21,10 @@ linstor_tls_cert: ""
 linstor_tls_key: ""
 linstor_tls_ca: ""
 linstor_tls_protocol: TLSv1.3
+# PEM certificates of the controller(s) this satellite accepts (a combined node lists its own). Set: the satellite
+# trusts only these, so another node's certificate from the same CA cannot take the satellite from its controller.
+# []: the satellite trusts the whole CA, and any certificate of it can connect (see README, Gotchas)
+linstor_tls_controller_certs: []
 # Key and trust store password: "" = generated on the host once and kept root-only beside the stores
 linstor_tls_store_password: ""
 

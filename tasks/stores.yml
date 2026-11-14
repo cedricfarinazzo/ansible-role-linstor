@@ -52,6 +52,61 @@
   environment:
     P: "{{ linstor_store_pass }}"
   register: linstor_stores
+  # The store password travels in the environment
+  no_log: true
   when: not (ansible_check_mode and linstor_ssl_dir_made is changed)
   changed_when: linstor_stores.stdout != 'unchanged'
   notify: Restart LINSTOR
+
+# The satellite accepts the listed controller certificates only: Java trusts a certificate placed in the trust
+# store as an anchor, and the CA is not in it, so another certificate of the CA chains to nothing it trusts.
+# The TLS client picks its certificate by the issuer names the server lists, taken from the store: each pinned
+# certificate also gets a throwaway self-signed anchor named like its issuer (key discarded, so it verifies nothing)
+# or the controller finds no certificate to send.
+- name: Build the satellite's trust store from the controller certificates
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    want=$( (cat {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
+    if [ -s {{ linstor_satellite_truststore | quote }} ] &&
+       [ "$(cat {{ linstor_satellite_trust_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
+    t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+    i=0
+    for f in {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; do
+      keytool -importcert -noprompt -alias "controller$i" -file "$f" \
+        -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
+      issuer=$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$f" | sed 's/^issuer= *//')
+      subject=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$f" | sed 's/^subject= *//')
+      if [ "$issuer" != "$subject" ]; then
+        keytool -genkeypair -alias "issuer$i" -keyalg EC -keysize 256 -dname "$issuer" -validity 36500 \
+          -keystore "$t/issuer$i.p12" -storetype PKCS12 -storepass:env P -keypass:env P > /dev/null
+        keytool -exportcert -rfc -alias "issuer$i" -keystore "$t/issuer$i.p12" -storepass:env P -file "$t/issuer$i.pem"
+        keytool -importcert -noprompt -alias "issuer$i" -file "$t/issuer$i.pem" \
+          -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
+      fi
+      i=$((i + 1))
+    done
+    chmod 0640 "$t/satellite-trust.jks"
+    mv "$t/satellite-trust.jks" {{ linstor_satellite_truststore | quote }}
+    echo "$want" > {{ linstor_satellite_trust_stamp | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    P: "{{ linstor_store_pass }}"
+  register: linstor_satellite_trust_built
+  no_log: true
+  when:
+    - linstor_satellite
+    - linstor_tls_controller_certs | length > 0
+    - not (ansible_check_mode and linstor_ssl_dir_made is changed)
+  changed_when: linstor_satellite_trust_built.stdout != 'unchanged'
+  notify: Restart LINSTOR
+
+- name: No satellite trust store without controller certificates
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ linstor_satellite_truststore }}"
+    - "{{ linstor_satellite_trust_stamp }}"
+  when: linstor_tls_controller_certs | length == 0

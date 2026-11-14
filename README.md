@@ -25,6 +25,7 @@ The role will:
 - ✅ Install `linstor-satellite`, `linstor-controller` and `linstor-client` as chosen, by name, from the APT sources already configured; it stops with a clear message when none provides them
 - ✅ Build `/etc/linstor/ssl/keystore.jks` (key and certificate chain) and `certificates.jks` (the CA) with a password generated on the host and kept root-only; rebuild them when the certificate, key or CA changes
 - ✅ Write `linstor_satellite.toml` (SSL on 3367, TLS 1.3), `linstor.toml` (HTTPS on 3371, client certificates required; plain HTTP on 127.0.0.1, which only redirects to HTTPS) and the `linstor` CLI configuration
+- ✅ With `linstor_tls_controller_certs`: build a satellite trust store holding only the controller certificates, so a second node of the same CA cannot take the satellite over
 - ✅ Point the controller's connector to satellites at the same stores, SSL only (the plain and debug connectors off)
 - ✅ Register the nodes, create the storage pools, create or update the resource groups, DRBD options and properties included; never delete anything
 
@@ -83,10 +84,13 @@ linstor_tls_cert: ""            # PEM, server and client use; the same certifica
 linstor_tls_key: ""             # PEM, no passphrase; stays where you put it
 linstor_tls_ca: ""              # PEM, the CA every node and client certificate chains to
 linstor_tls_protocol: TLSv1.3
+linstor_tls_controller_certs: []   # satellite: PEM certificates of the controller(s) it accepts; [] = the whole CA
 linstor_tls_store_password: ""  # "" = generated on the host into /etc/linstor/ssl/store.password (0600)
 ```
 
 The PEM files are yours: the role reads them and never moves or rewrites them, so other services (DRBD's kernel TLS handshake daemon, for example) can use the same files. Renew a certificate in place and rerun the role: it rebuilds the stores and restarts LINSTOR.
+
+`linstor_tls_controller_certs` closes the satellite's weak spot (see [Security notes](#️-security-notes)): the satellite then trusts exactly the listed certificates (a combined node lists its own), kept in `/etc/linstor/ssl/satellite-trust.jks`, so no other certificate of your CA can connect to it. List the certificate files of the controller(s) on every satellite host (a public certificate, copied by your PKI or by Ansible); renew the controller's certificate, copy it, and rerun the role on the satellites.
 
 ### Listeners
 
@@ -181,6 +185,12 @@ linstor_nodes:
         tasks_from: cluster.yml
 ```
 
+## ⚠️ Security notes
+
+- **A satellite trusts what its trust store holds.** By default that is your CA: LINSTOR's satellite port 3367 keeps one controller session, and a TLS peer with any valid certificate of the CA that connects takes it from the real controller (the node stays offline until the satellite restarts). Any node, or anything holding a certificate of the CA, can do it. Set `linstor_tls_controller_certs` on every satellite to pin the controller's certificate, and open 3367 in your firewall to the controller's address only (nftables: `ip saddr <controller> tcp dport 3367 accept`), or bind the satellite to the storage network with `linstor_satellite_bind_address`.
+- **Residual risk with the pin:** whoever holds the controller's private key (or can sit between the controller and a satellite at the network level with it) still is the controller; a pin is renewed by copying the new controller certificate to the satellites. The controller side still trusts the whole CA to authenticate satellites and API clients: issue client certificates only to who may administer the cluster, and keep 3371 and 3367 off untrusted networks.
+- **Passwords:** the key and trust store password and the database password sit in the TOML files, `root`-owned and readable by the controller's group only (`0640`); the tasks that read or write them are `no_log`, and the templates are kept out of `--diff` output.
+
 ## 🔍 Check
 
 ```bash
@@ -197,7 +207,7 @@ curl -s --cacert ca.crt https://node-a:3371/v1/controller/version   # refused: n
 
 ## 🧪 Testing
 
-Molecule runs in Docker containers, which share the CI host's kernel: no DRBD resource is ever brought up, LINSTOR itself runs. A test CA made in `prepare` signs throwaway certificates. `default` (every supported distribution) runs check mode on a fresh container, converges a combined node over mutual TLS with a file-backed thin pool and a resource group, checks the files, stores, listeners (3366 closed, 3370 on loopback only), that HTTPS 3371 and the satellite 3367 refuse a client without a certificate or with another CA's, the node online over SSL; reruns for idempotence, renews the certificate, then runs `linstor_state: absent`. `cluster` (Debian 13) runs a combined node and a satellite in two containers and checks the same across the network. `failure` (Debian 13) runs a missing file, a key of another pair, a certificate of another CA, an expired certificate and no package source: each must stop before any LINSTOR package or file. `tests/validate.test.sh` feeds good and bad inputs to the role's checks.
+Molecule runs in Docker containers, which share the CI host's kernel: no DRBD resource is ever brought up, LINSTOR itself runs. A test CA made in `prepare` signs throwaway certificates. `default` (every supported distribution) runs check mode on a fresh container, converges a combined node over mutual TLS with a file-backed thin pool and a resource group, checks the files, stores, listeners (3366 closed, 3370 on loopback only), that HTTPS 3371 and the satellite 3367 refuse a client without a certificate or with another CA's, the node online over SSL; reruns for idempotence, then runs a pass under `--diff` (the store password must not appear), a pass without the controller pin (a valid certificate of the CA must then take the satellite from its controller, proving the pin is what stops it), renews the certificate and runs `linstor_state: absent`. The satellite refuses a second node's valid certificate. `cluster` (Debian 13) runs a combined node and a satellite in two containers and checks the same across the network, the other node's valid certificate included. `failure` (Debian 13) runs a missing file, a key of another pair, a certificate of another CA, an expired certificate, a wrong controller certificate (missing, of another CA, expired) and no package source: each must stop before any LINSTOR package or file. `tests/validate.test.sh` feeds good and bad inputs to the role's checks.
 
 ```bash
 ./run-tests.sh debian13

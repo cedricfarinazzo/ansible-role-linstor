@@ -7,6 +7,7 @@
       vars:
         linstor_tls_cert: "{{ molecule_case.vars.linstor_tls_cert | default('/root/pki/node.crt') }}"
         linstor_tls_key: "{{ molecule_case.vars.linstor_tls_key | default('/root/pki/node.key') }}"
+        linstor_tls_controller_certs: "{{ molecule_case.vars.linstor_tls_controller_certs | default([]) }}"
   rescue:
     - name: Find what the failed run left
       ansible.builtin.shell: |

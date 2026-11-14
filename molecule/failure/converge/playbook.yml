@@ -19,6 +19,18 @@
         - name: expired
           vars:
             linstor_tls_cert: /root/pki/expired.crt
+        - name: pin-missing
+          vars:
+            linstor_tls_controller_certs:
+              - /root/pki/missing.crt
+        - name: pin-other-ca
+          vars:
+            linstor_tls_controller_certs:
+              - /root/pki/rogue.crt
+        - name: pin-expired
+          vars:
+            linstor_tls_controller_certs:
+              - /root/pki/expired.crt
         - name: no-source
           vars: {}
       loop_control:

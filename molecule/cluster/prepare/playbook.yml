@@ -95,3 +95,16 @@
         - {dest: rogue.key, content: "{{ molecule_ca.results[2].content | b64decode }}"}
       loop_control:
         label: "{{ item.dest }}"
+
+    # What a satellite pins: the controller's certificate, on every node (the controller's own satellite too)
+    - name: Read the controller's certificate
+      ansible.builtin.slurp:
+        src: /root/pki/node.crt
+      register: molecule_controller_cert
+      delegate_to: "{{ molecule_controller }}"
+
+    - name: The controller's certificate on the node
+      ansible.builtin.copy:
+        dest: /root/pki/controller.crt
+        content: "{{ molecule_controller_cert.content | b64decode }}"
+        mode: "0600"

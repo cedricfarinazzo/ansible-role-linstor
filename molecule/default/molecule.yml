@@ -40,6 +40,9 @@ provisioner:
         linstor_tls_cert: /root/pki/node.crt
         linstor_tls_key: /root/pki/node.key
         linstor_tls_ca: /root/pki/ca.crt
+        # The satellite accepts this node's own certificate (the controller) and no other of the CA
+        linstor_tls_controller_certs:
+          - /root/pki/node.crt
         linstor_packages_extra:
           - drbd-reactor
         linstor_nodes:

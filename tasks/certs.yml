@@ -34,3 +34,35 @@
       linstor_tls_cert {{ linstor_tls_cert }}, linstor_tls_key {{ linstor_tls_key }}, linstor_tls_ca {{ linstor_tls_ca }}:
       {{ linstor_cert_check.stdout | default('') }}. Nothing was changed.
     quiet: true
+
+# A pinned controller certificate that is wrong would leave the satellite refusing its own controller
+- name: Check the controller certificates the satellite pins
+  ansible.builtin.shell: |
+    set -uo pipefail
+    f={{ item | quote }}
+    [ -r "$f" ] || { echo "missing: $f"; exit 1; }
+    openssl x509 -noout -in "$f" > /dev/null 2>&1 || { echo "not a PEM certificate: $f"; exit 1; }
+    openssl x509 -noout -checkend 0 -in "$f" > /dev/null || { echo "the certificate has expired: $f"; exit 1; }
+    openssl verify -CAfile {{ linstor_tls_ca | quote }} "$f" > /dev/null 2>&1 ||
+      { echo "not signed by the CA: $f"; exit 1; }
+  args:
+    executable: /bin/bash
+  loop: "{{ linstor_tls_controller_certs }}"
+  register: linstor_pin_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: linstor_satellite
+
+- name: The controller certificates are usable
+  ansible.builtin.assert:
+    that:
+      - linstor_pin_failed | length == 0
+    fail_msg: >-
+      linstor_tls_controller_certs: {{ linstor_pin_failed | map(attribute='stdout') | join('; ') }}.
+      Nothing was changed.
+    quiet: true
+  vars:
+    linstor_pin_failed: >-
+      {{ linstor_pin_check.results | default([]) | rejectattr('skipped', 'defined')
+         | rejectattr('rc', 'equalto', 0) | list }}
