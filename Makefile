@@ -2,7 +2,7 @@
 SUPPORTED_DISTROS := debian13 ubuntu2404 ubuntu2604
 DEFAULT_DISTRO := debian13
 
-.PHONY: molecule-test molecule-test-all molecule-test-failure molecule-test-cluster lint help check-prereqs test
+.PHONY: molecule-test molecule-test-all molecule-test-failure molecule-test-cluster molecule-test-plain lint help check-prereqs test
 
 help:
 	@echo "Available targets:"
@@ -12,6 +12,7 @@ help:
 	@echo "  molecule-test-<distro>     - Run molecule tests against specific distribution"
 	@echo "  molecule-test-failure      - Run the failure scenario (bad certificates, no package source) on $(DEFAULT_DISTRO)"
 	@echo "  molecule-test-cluster      - Run the cluster scenario (a combined node and a satellite over mutual TLS) on $(DEFAULT_DISTRO)"
+	@echo "  molecule-test-plain        - Run the plain scenario (a combined node without TLS) on $(DEFAULT_DISTRO)"
 	@echo "  lint                       - Run ansible-lint"
 	@echo "  help                       - Show this help message"
 	@echo ""
@@ -42,6 +43,9 @@ molecule-test-failure: check-prereqs
 
 molecule-test-cluster: check-prereqs
 	./run-tests.sh -s cluster $(DEFAULT_DISTRO)
+
+molecule-test-plain: check-prereqs
+	./run-tests.sh -s plain $(DEFAULT_DISTRO)
 
 # Individual distribution targets
 molecule-test-%: check-prereqs

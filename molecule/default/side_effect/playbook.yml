@@ -60,8 +60,8 @@
         executable: /bin/bash
       changed_when: false
 
-# A renewed certificate rebuilds the stores and the node comes back over SSL; then state absent removes everything
-# the role added.
+# A renewed certificate rebuilds the stores and the node comes back over SSL. The satellite pins the old and the new
+# certificate, the overlap a multi-host renewal needs. Then state absent removes everything the role added.
 - name: Renew the node certificate
   hosts: all
   pre_tasks:
@@ -69,6 +69,7 @@
       ansible.builtin.shell: |
         set -euo pipefail
         cd /root/pki
+        cp node.crt node.old.crt
         openssl x509 -req -in node.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out node.crt -days 60 -extfile ext
         sha256sum node.crt > renewed.sha256
       args:
@@ -76,14 +77,23 @@
       changed_when: true
   roles:
     - role: ../../../../ansible-role-linstor
+      vars:
+        linstor_tls_controller_certs:
+          - /root/pki/node.old.crt
+          - /root/pki/node.crt
   post_tasks:
-    - name: The key store holds the renewed certificate and the node is online over SSL
+    - name: The key store and the satellite trust store hold the renewed certificate and the node is online over SSL
       ansible.builtin.shell: |
         set -o pipefail
         fail() { echo "FAIL: $*"; exit 1; }
         p=$(cat /etc/linstor/ssl/store.password)
         f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/node.crt | cut -d= -f2)
         keytool -list -keystore /etc/linstor/ssl/keystore.jks -storepass "$p" | grep -q "$f" || fail "old certificate kept"
+        t=$(keytool -list -keystore /etc/linstor/ssl/satellite-trust.jks -storepass "$p") || fail "satellite trust store unreadable"
+        grep -q "$f" <<<"$t" || fail "the satellite does not pin the renewed certificate"
+        o=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/node.old.crt | cut -d= -f2)
+        grep -q "$o" <<<"$t" || fail "the satellite dropped the old certificate during the overlap"
+        [ "$(grep -c trustedCertEntry <<<"$t")" = 4 ] || fail "satellite trust store: $t"
         for i in $(seq 30); do
           linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
             > /dev/null && exit 0

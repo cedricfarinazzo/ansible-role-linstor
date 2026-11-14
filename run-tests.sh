@@ -11,6 +11,7 @@ show_usage() {
     echo "Run a Molecule scenario of the linstor role (default: the default scenario on debian13)."
     echo "Scenarios: default (a combined node over mutual TLS, pool and resource group, idempotence, then state absent),"
     echo "cluster (a combined node and a satellite in two containers, mutual TLS across the network),"
+    echo "plain (a combined node without TLS: plain satellite and REST API, no store),"
     echo "failure (a missing certificate, a key that does not match, a certificate from another CA, no package source: the role must stop)."
     echo "Several distributions, or 'all', run in parallel; each writes .molecule-logs/<distro>.log."
     echo
@@ -22,6 +23,7 @@ show_usage() {
     echo "  $0 all                   # every supported distribution, in parallel"
     echo "  $0 -s failure debian13   # the failure paths"
     echo "  $0 -s cluster debian13   # two nodes"
+    echo "  $0 -s plain debian13     # without TLS"
 }
 
 if [[ ${1:-} == -h || ${1:-} == --help ]]; then show_usage; exit 0; fi

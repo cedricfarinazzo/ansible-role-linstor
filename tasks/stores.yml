@@ -61,8 +61,9 @@
 # The satellite accepts the listed controller certificates only: Java trusts a certificate placed in the trust
 # store as an anchor, and the CA is not in it, so another certificate of the CA chains to nothing it trusts.
 # The TLS client picks its certificate by the issuer names the server lists, taken from the store: each pinned
-# certificate also gets a throwaway self-signed anchor named like its issuer (key discarded, so it verifies nothing)
-# or the controller finds no certificate to send.
+# certificate also gets a throwaway self-signed anchor named like its issuer, or the controller finds no certificate
+# to send. Its key lives in tmpfs for the keytool calls and is deleted at once: nothing is signed with it, so a
+# certificate of the CA (or of any other key) cannot chain to the anchor.
 - name: Build the satellite's trust store from the controller certificates
   ansible.builtin.shell: |
     set -euo pipefail
@@ -70,7 +71,7 @@
     want=$( (cat {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
     if [ -s {{ linstor_satellite_truststore | quote }} ] &&
        [ "$(cat {{ linstor_satellite_trust_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
-    t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+    t=$(mktemp -d); m=$(mktemp -d -p /dev/shm); trap 'rm -rf "$t" "$m"' EXIT
     i=0
     for f in {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; do
       keytool -importcert -noprompt -alias "controller$i" -file "$f" \
@@ -79,9 +80,10 @@
       subject=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$f" | sed 's/^subject= *//')
       if [ "$issuer" != "$subject" ]; then
         keytool -genkeypair -alias "issuer$i" -keyalg EC -keysize 256 -dname "$issuer" -validity 36500 \
-          -keystore "$t/issuer$i.p12" -storetype PKCS12 -storepass:env P -keypass:env P > /dev/null
-        keytool -exportcert -rfc -alias "issuer$i" -keystore "$t/issuer$i.p12" -storepass:env P -file "$t/issuer$i.pem"
-        keytool -importcert -noprompt -alias "issuer$i" -file "$t/issuer$i.pem" \
+          -keystore "$m/issuer$i.p12" -storetype PKCS12 -storepass:env P -keypass:env P > /dev/null
+        keytool -exportcert -rfc -alias "issuer$i" -keystore "$m/issuer$i.p12" -storepass:env P -file "$m/issuer$i.pem" > /dev/null
+        rm -f "$m/issuer$i.p12"
+        keytool -importcert -noprompt -alias "issuer$i" -file "$m/issuer$i.pem" \
           -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
       fi
       i=$((i + 1))

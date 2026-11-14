@@ -24,6 +24,10 @@
         done
         [ "$(stat -c '%U %a' /etc/linstor/ssl/store.password)" = "root 600" ] || fail "password file mode"
         [ "$(stat -c '%U %a' /etc/linstor/ssl)" = "root 750" ] || fail "ssl dir mode"
+        # Only the stores, the password and the stamps: no key of the throwaway anchors, in the directory or in tmpfs
+        [ "$(ls /etc/linstor/ssl | tr '\n' ' ')" = "certificates.jks keystore.jks satellite-trust.jks satellite-trust.sha256 store.password stores.sha256 " ] ||
+          fail "ssl dir holds: $(ls /etc/linstor/ssl)"
+        if find /dev/shm /tmp /var/tmp /root -name 'issuer*' 2>/dev/null | grep -q .; then fail "an anchor file remains"; fi
       args:
         executable: /bin/bash
       changed_when: false
@@ -65,6 +69,11 @@
         grep -q "$f" <<<"$t" || fail "satellite trust store does not hold the controller certificate"
         f=$(openssl x509 -noout -fingerprint -sha256 -in /root/pki/ca.crt | cut -d= -f2)
         if grep -q "$f" <<<"$t"; then fail "satellite trust store holds the CA"; fi
+        # Certificates only: the anchor has no private key in any store
+        if grep -q PrivateKeyEntry <<<"$t"; then fail "a key in the satellite trust store"; fi
+        # The anchor carries the CA's name (its key is not the CA's: the forged-certificate probes of the 3367 task)
+        a=$(keytool -list -v -keystore /etc/linstor/ssl/satellite-trust.jks -storepass "$p" -alias issuer0) || fail "no anchor"
+        grep -q '^Owner: CN=Test CA$' <<<"$a" || fail "anchor name: $a"
       args:
         executable: /bin/bash
       changed_when: false
@@ -126,6 +135,8 @@
         c=$({{ molecule_curl }} {{ molecule_api }}/controller/version); [ "$c" = 000 ] || fail "without a certificate: $c"
         c=$({{ molecule_curl }} --cert /root/pki/rogue.crt --key /root/pki/rogue.key {{ molecule_api }}/controller/version)
         [ "$c" = 000 ] || fail "with another CA's certificate: $c"
+        c=$({{ molecule_curl }} --cert /root/pki/forged.crt --key /root/pki/forged.key {{ molecule_api }}/controller/version)
+        [ "$c" = 000 ] || fail "with a certificate of another key under the CA's name: $c"
         c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3370/v1/nodes); [ "$c" = 302 ] || fail "plain 3370: $c"
       args:
         executable: /bin/bash
@@ -141,6 +152,11 @@
         o=$(probe); grep -q 'unexpected eof' <<<"$o" || fail "accepted without a certificate"
         o=$(probe -cert /root/pki/rogue.crt -key /root/pki/rogue.key); grep -q 'unexpected eof' <<<"$o" || fail "accepted another CA"
         o=$(probe -cert /root/pki/peer.crt -key /root/pki/peer.key -cert_chain /root/pki/ca.crt); grep -q 'unexpected eof' <<<"$o" || fail "accepted a node of the CA that is not the controller"
+        # Another key under the CA's own name, the name the satellite's throwaway anchor carries, with and without an
+        # authority key identifier, alone or with its own CA certificate: none chains to the anchor
+        o=$(probe -cert /root/pki/forged.crt -key /root/pki/forged.key); grep -q 'unexpected eof' <<<"$o" || fail "accepted a certificate of another key under the CA's name"
+        o=$(probe -cert /root/pki/forged.crt -key /root/pki/forged.key -cert_chain /root/pki/fakeca.crt); grep -q 'unexpected eof' <<<"$o" || fail "accepted a forged chain"
+        o=$(probe -cert /root/pki/forged-noaki.crt -key /root/pki/forged.key -cert_chain /root/pki/fakeca.crt); grep -q 'unexpected eof' <<<"$o" || fail "accepted a forged chain without a key identifier"
         sleep 20
         linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' \
           > /dev/null || fail "the refused peers took the node offline"

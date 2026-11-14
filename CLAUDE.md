@@ -16,15 +16,16 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 - `meta/main.yml` — Galaxy metadata; `platforms` lists exactly what CI tests.
 - `molecule/default/` — one combined node per distribution: check mode on a fresh container, converge over mutual TLS with a file-thin pool and a resource group, verify (packages, root-only files, TOML, stores, listeners, mTLS refusals on 3371 and 3367 including a valid second certificate of the CA, node online over SSL, connectors), idempotence, `side_effect/` (a `--diff` run that must not print the store password, a run without the pin where the second certificate takes the satellite over, certificate renewal, then `absent` and nothing left).
 - `molecule/cluster/` — Debian 13, two containers on one network: a combined node and a satellite, certificates signed by a test CA on the controller from CSRs made on each node, the controller's certificate pinned on both satellites; verify across the network, the other node's valid certificate refused; check mode and idempotence.
+- `molecule/plain/` — Debian 13, a combined node without TLS: no `/etc/linstor/ssl`, plain satellite 3366 and REST 3370, SSL ports closed, node online as PLAIN, plain connector on.
 - `molecule/failure/` — Debian 13, no LINSTOR source: a missing file, a key of another pair, a certificate of another CA, an expired certificate, a missing, foreign or expired pinned controller certificate, then no package source; `converge/case.yml` records each failure, `verify/` checks it and that nothing of LINSTOR is on the host.
-- Satellite pin: `linstor_tls_controller_certs` builds `satellite-trust.jks` (only those certificates) for the satellite's `trusted_certificates`; the CA stays in `certificates.jks` for the controller. Java trusts a certificate in the store as an anchor, so another certificate of the CA chains to nothing the satellite trusts. The store also holds, per certificate, a throwaway self-signed anchor named like its issuer (key discarded): the controller picks its client certificate by the issuer names the server lists, and without it sends none ("Empty client certificate chain").
+- Satellite pin: `linstor_tls_controller_certs` builds `satellite-trust.jks` (only those certificates) for the satellite's `trusted_certificates`; the CA stays in `certificates.jks` for the controller. Java trusts a certificate in the store as an anchor, so another certificate of the CA chains to nothing the satellite trusts. The store also holds, per certificate, a throwaway self-signed anchor named like its issuer; its key is generated in tmpfs (`/dev/shm`), deleted right after the export, never in the store or on disk: the controller picks its client certificate by the issuer names the server lists, and without it sends none ("Empty client certificate chain"). Renewal: pin old and new together, then drop the old (README); `side_effect/` runs that overlap and `verify/` probes forged certificates under the CA's name.
 - Molecule's test-only role (`molecule/*/requirements.yml`): `cedricfarinazzo.drbd`, its `repo.yml` only, for LINBIT's source; installed into the scenario's ephemeral directory by the `shell` dependency.
 - `tests/validate.test.sh` — good and bad inputs against `tasks/validate.yml` on localhost.
 - `run-tests.sh` / `Makefile` — local Molecule entry points: `run-tests.sh [-s SCENARIO] <distro>`; several distros or `all` run in parallel, one log each in `.molecule-logs/` (git-ignored).
 - `requirements.yml` — collections the role needs at runtime: none.
 - `requirements-dev.txt` — controller tooling, exact pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
-- `.github/workflows/` — `ci.yml` (lint, Galaxy description length, shellcheck, input tests, the default scenario on every distribution, the cluster and failure scenarios), `pr-title.yml` (Conventional Commit title check), `release.yml` (semantic-release after `ci.yml` passes on `main`).
+- `.github/workflows/` — `ci.yml` (lint, Galaxy description length, shellcheck, input tests, the default scenario on every distribution, the cluster, plain and failure scenarios), `pr-title.yml` (Conventional Commit title check), `release.yml` (semantic-release after `ci.yml` passes on `main`).
 - `renovate.json` — dependency updates.
 
 ## Conventions
@@ -66,7 +67,7 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 
 - Lint: `source .venv/bin/activate && yamllint . && ansible-lint && shellcheck run-tests.sh tests/*.sh`
 - Input tests: `tests/validate.test.sh`
-- Molecule: `./run-tests.sh debian13`, `./run-tests.sh -s cluster debian13`, `./run-tests.sh -s failure debian13`, all distros in parallel: `./run-tests.sh all`
+- Molecule: `./run-tests.sh debian13`, `./run-tests.sh -s cluster debian13`, `./run-tests.sh -s plain debian13`, `./run-tests.sh -s failure debian13`, all distros in parallel: `./run-tests.sh all`
 
 ## Gotchas
 

@@ -1,0 +1,65 @@
+---
+# Without linstor_tls: nothing of the TLS path is built, the plain listeners are the ones that serve.
+# Each check line ends in "|| fail": a shell task's status is its last command's only.
+- name: Verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: No TLS file, the plain configuration and the client configuration
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        if [ -e /etc/linstor/ssl ]; then fail "an ssl directory exists"; fi
+        s=/etc/linstor/linstor_satellite.toml c=/etc/linstor/linstor.toml
+        grep -qx '  type = "plain"' $s || fail "satellite type"
+        grep -qx '  port = 3366' $s || fail "satellite port"
+        if grep -qE 'password|server_certificate' $s; then fail "TLS settings in the satellite file"; fi
+        sed -n '/^\[https\]/,$p' $c | grep -qx '  enabled = false' || fail "https enabled"
+        grep -qx '  listen_addr = "::"' $c || fail "http listen"
+        [ "$(grep -x 'controllers = linstor://localhost:3370' /etc/linstor/linstor-client.conf)" ] || fail "client controllers"
+        if grep -qE 'certfile|keyfile|cafile' /etc/linstor/linstor-client.conf; then fail "client certificates in the client file"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # 3366 and 3370 on every address; 3367 and 3371 closed
+    - name: Listeners
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        l=$(ss -Htln | awk '{print $4}')
+        grep -qE '^(\*|\[::\]|0\.0\.0\.0):3366$' <<<"$l" || fail "3366 not on every address: $l"
+        grep -qE '^(\*|\[::\]|0\.0\.0\.0):3370$' <<<"$l" || fail "3370 not on every address: $l"
+        if grep -qE ':(3367|3371)$' <<<"$l"; then fail "an SSL port listens: $l"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The node is online in plain, the pool and the group exist, the REST API answers without a certificate
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        n=$(linstor -m node list) || fail "linstor node list"
+        jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE" and .type == "COMBINED")
+          | .net_interfaces[] | select(.satellite_encryption_type == "PLAIN" and .satellite_port == 3366)' <<<"$n" \
+          > /dev/null || fail "node: $n"
+        p=$(linstor -m storage-pool list) || fail "linstor storage-pool list"
+        jq -e '.[0][] | select(.storage_pool_name == "pool-test" and .provider_kind == "FILE_THIN")' <<<"$p" > /dev/null || fail "pool: $p"
+        r=$(linstor -m resource-group list) || fail "linstor resource-group list"
+        jq -e '.[0][] | select(.name == "rg-test" and .select_filter.place_count == 1)' <<<"$r" > /dev/null || fail "rg: $r"
+        c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3370/v1/controller/version); [ "$c" = 200 ] || fail "plain REST: $c"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The controller's plain connector is on; the role set no store for the SSL connector
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        c=$(curl -sf http://127.0.0.1:3370/v1/controller/properties) || fail "controller properties"
+        jq -e '(.["NetCom/PlainConnector/Enabled"] | ascii_downcase) == "true"
+          and (.["NetCom/DebugSslConnector/Enabled"] | ascii_downcase) == "false"
+          and (.["NetCom/SslConnector/KeyStore"] // "") != "/etc/linstor/ssl/keystore.jks"' <<<"$c" > /dev/null || fail "connectors: $(jq -c 'with_entries(select((.key | test("^NetCom/")) and (.key | test("Passwd") | not)))' <<<"$c")"
+      args:
+        executable: /bin/bash
+      changed_when: false
