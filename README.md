@@ -92,7 +92,7 @@ The PEM files are yours: the role reads them and never moves or rewrites them, s
 
 `linstor_tls_controller_certs` closes the satellite's weak spot (see [Security notes](#️-security-notes)): the satellite then trusts exactly the listed certificates (a combined node lists its own), kept in `/etc/linstor/ssl/satellite-trust.jks`, so no other certificate of your CA can connect to it. List the certificate files of the controller(s) on every satellite host (a public certificate, copied by your PKI or by Ansible). The trust store also holds, per pinned certificate, a throwaway self-signed anchor named like its issuer, with no usable key (it lives in tmpfs for the `keytool` calls and is deleted at once): the controller picks its client certificate by the issuer names the satellite lists, and sends none without it. A certificate of your CA, or of any other key under the CA's name, cannot chain to the anchor.
 
-**Renewing the controller's certificate** without an outage: list the old and the new certificate on every satellite (`linstor_tls_controller_certs: [old.crt, new.crt]`) and rerun the role there; then renew on the controller and rerun it; then drop the old file from the list and rerun the satellites. Renewing the controller first leaves its satellites refusing it (nodes OFFLINE) until their pin lists the new certificate.
+**Renewing the controller's certificate** without an outage: list the old and the new certificate on every satellite (both paths in `linstor_tls_controller_certs`) and rerun the role there; then renew on the controller and rerun it; then drop the old file from the list and rerun the satellites. Renewing the controller first leaves its satellites refusing it (nodes OFFLINE) until their pin lists the new certificate.
 
 ### Listeners
 
