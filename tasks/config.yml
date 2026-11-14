@@ -50,6 +50,22 @@
     mode: "0644"
   when: linstor_client and not (ansible_check_mode and linstor_client_dir is changed)
 
+# Only the runtime masks install.yml sets (a rerun after a failed run finds them too), never a user's own mask;
+# before ha.yml, which cannot disable a masked unit
+- name: Lift the install-time masks now the configuration is in place
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for u in {{ linstor_service_packages | join(' ') }}; do
+      if [ "$(systemctl is-enabled "$u.service" 2>/dev/null || true)" = masked-runtime ]; then
+        systemctl unmask --runtime "$u.service"
+        echo "$u"
+      fi
+    done
+  args:
+    executable: /bin/bash
+  register: linstor_unmasked
+  changed_when: linstor_unmasked.stdout | length > 0
+
 - name: Controller HA units and the satellite drop-in
   ansible.builtin.include_tasks: ha.yml
 
