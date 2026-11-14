@@ -1,5 +1,5 @@
 ---
-# Nodes, storage pools and resource groups through the controller's REST API: read, then create or update what
+# Nodes, storage pools, resource groups and resource definitions through the controller's REST API: read, then create or update what
 # differs. Nothing is ever deleted. Also runnable alone: include_role tasks_from cluster.yml.
 - name: Cluster objects
   module_defaults:
@@ -200,3 +200,76 @@
           or linstor_rg.props | default({}) | combine(linstor_rg_props) != linstor_rg.props | default({})
       vars:
         linstor_rg: "{{ linstor_rgs_read.json | selectattr('name', 'equalto', item.name) | first }}"
+
+    - name: Read the resource definitions
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-definitions"
+      register: linstor_rds_read
+      check_mode: false
+      when: linstor_cluster_api is succeeded and linstor_resource_definitions | length > 0
+
+    # Definitions only: placement is the autoplace below, so a definition never lands half placed
+    - name: Resource definitions are spawned from their group
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-groups/{{ item.resource_group }}/spawn"
+        method: POST
+        body:
+          resource_definition_name: "{{ item.name }}"
+          volume_sizes:
+            - "{{ item.size_mib | int * 1024 }}"
+          definitions_only: true
+      changed_when: true
+      loop: "{{ linstor_resource_definitions }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.name not in linstor_rds_read.json | map(attribute='name')
+
+    - name: Read the resource definitions after the creation
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-definitions"
+      register: linstor_rds_read
+      check_mode: false
+      when: linstor_cluster_api is succeeded and linstor_resource_definitions | length > 0
+
+    - name: Resource definitions match their properties
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-definitions/{{ item.name }}"
+        method: PUT
+        body:
+          override_props: "{{ linstor_rd_props }}"
+      changed_when: true
+      loop: "{{ linstor_resource_definitions }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.name in linstor_rds_read.json | map(attribute='name')
+        - linstor_rd.props | default({}) | combine(linstor_rd_props) != linstor_rd.props | default({})
+      vars:
+        linstor_rd: "{{ linstor_rds_read.json | selectattr('name', 'equalto', item.name) | first }}"
+
+    - name: Read the placed resources
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/view/resources"
+      register: linstor_resources_read
+      check_mode: false
+      when: >-
+        linstor_cluster_api is succeeded
+        and linstor_resource_definitions | map(attribute='place', default=true) | select | list | length > 0
+
+    # By the group's filter (place_count, pools, diskless_on_remaining) and its auto-tiebreaker; once, when unplaced
+    - name: Unplaced resource definitions are placed
+      ansible.builtin.uri:
+        url: "{{ linstor_api }}/v1/resource-definitions/{{ item.name }}/autoplace"
+        method: POST
+        body: {}
+      changed_when: true
+      loop: "{{ linstor_resource_definitions }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - linstor_cluster_api is succeeded
+        - item.place | default(true)
+        - linstor_resources_read.json | default([]) | selectattr('name', 'equalto', item.name) | list | length == 0

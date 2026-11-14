@@ -1,0 +1,163 @@
+---
+# Controller HA on the running cluster: check mode, then the run, a rerun that changes nothing, the units drbd-reactor
+# needs on both controller-capable nodes and the controller enabled on none; then absent. No DRBD module here:
+# drbd-reactor never promotes linstor_db, so no controller runs once HA is on.
+# Test fixture, not the role: no DRBD module in a container, so drbd-reactor's drbdsetup events2 exits and the
+# service fails. Stubs on drbd-reactor's PATH report a loaded module and no resource; promotion still fails, so
+# the promoter never starts the controller.
+- name: Stub drbdsetup for drbd-reactor
+  hosts: ha_controllers
+  gather_facts: false
+  tasks:
+    - name: Stub and drop-in directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /usr/local/lib/molecule
+        - /etc/systemd/system/drbd-reactor.service.d
+
+    - name: The stub
+      ansible.builtin.copy:
+        dest: /usr/local/lib/molecule/drbdsetup
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          case "$1" in
+            events2) echo "exists -"; exec sleep infinity;;
+            *) exec /usr/sbin/drbdsetup "$@";;
+          esac
+
+    - name: The drbdadm stub, a loaded module in its version
+      ansible.builtin.copy:
+        dest: /usr/local/lib/molecule/drbdadm
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          case "$1" in
+            --version) /usr/sbin/drbdadm --version 2>/dev/null | grep -v '^DRBD_KERNEL'; echo DRBD_KERNEL_VERSION_CODE=0x090200;;
+            *) exec /usr/sbin/drbdadm "$@";;
+          esac
+
+    - name: The stub first on drbd-reactor's PATH
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/drbd-reactor.service.d/molecule.conf
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=PATH=/usr/local/lib/molecule:/usr/sbin:/usr/bin:/sbin:/bin
+
+    - name: Systemd reads the drop-in
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+- name: Turn controller HA on from the control node, as a user would
+  hosts: ha_controllers[0]
+  gather_facts: false
+  vars:
+    molecule_run: >-
+      ansible-playbook -i "{{ inventory_dir }}" "{{ playbook_dir }}/../converge/playbook.yml"
+      -e @"{{ playbook_dir }}/../ha-vars.yml"
+  tasks:
+    - name: Check mode, then the run, then a rerun that changes nothing
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        log={{ inventory_dir }}/../ha
+        {{ molecule_run }} --check > $log-check.log 2>&1 || { tail -30 $log-check.log; fail "check mode failed"; }
+        {{ molecule_run }} > $log-run.log 2>&1 || { tail -30 $log-run.log; fail "the HA run failed"; }
+        grep -qE 'changed=[1-9]' $log-run.log || fail "the HA run changed nothing"
+        {{ molecule_run }} > $log-rerun.log 2>&1 || { tail -30 $log-rerun.log; fail "the HA rerun failed"; }
+        if grep -E '^\S+ +: ok=' $log-rerun.log | grep -qE 'changed=[1-9]'; then
+          grep -B2 -E '^changed:' $log-rerun.log | tail -30; fail "the HA rerun is not idempotent"
+        fi
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+- name: Verify the HA units on the controller-capable nodes
+  hosts: ha_controllers
+  gather_facts: true
+  tasks:
+    - name: The promoter runs under drbd-reactor; the mount unit; the controller enabled nowhere
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        p=/etc/drbd-reactor.d/linstor_db.toml
+        grep -qx '\[\[promoter\]\]' $p || fail "promoter: $(cat $p)"
+        grep -qx '\[promoter.resources.linstor_db\]' $p || fail "promoter resource: $(cat $p)"
+        grep -qx 'start = \["var-lib-linstor.mount", "linstor-controller.service"\]' $p || fail "start: $(cat $p)"
+        grep -qx 'stop-services-on-exit = true' $p || fail "stop-services-on-exit: $(cat $p)"
+        m=/etc/systemd/system/var-lib-linstor.mount
+        grep -qx 'What=/dev/drbd/by-res/linstor_db/0' $m || fail "mount What: $(cat $m)"
+        grep -qx 'Where=/var/lib/linstor' $m || fail "mount Where: $(cat $m)"
+        grep -qx 'Type=ext4' $m || fail "mount Type: $(cat $m)"
+        [ "$(systemctl show -p LoadState --value var-lib-linstor.mount)" = loaded ] || fail "mount unit not loaded"
+        if systemctl is-enabled var-lib-linstor.mount 2>/dev/null | grep -qx enabled; then fail "mount unit enabled"; fi
+        [ "$(systemctl is-enabled linstor-controller)" = disabled ] || fail "controller $(systemctl is-enabled linstor-controller)"
+        systemctl is-enabled drbd-reactor > /dev/null || fail "drbd-reactor not enabled"
+        systemctl is-active drbd-reactor > /dev/null || fail "drbd-reactor not active: $(journalctl -u drbd-reactor -n 20 --no-pager)"
+        grep -q "linstor+ssl://.*,linstor+ssl://" /etc/linstor/linstor-client.conf || fail "client lists one controller"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # drbd-reactor owns the controller: it tried to promote linstor_db, failed (no DRBD here) and stopped the
+    # controller converge had started; no node runs one it was not given by a promotion
+    - name: The promotion was tried and drbd-reactor runs no controller without it
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for i in $(seq 20); do
+          journalctl -u drbd-reactor --no-pager | grep -q "Starting 'linstor_db' failed" && break; sleep 3
+        done
+        journalctl -u drbd-reactor --no-pager | grep -q "Starting 'linstor_db' failed" || fail "no promotion attempt"
+        if systemctl is-active linstor-controller > /dev/null; then fail "a controller runs without the promotion"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Verify every satellite keeps the database resource
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: LS_KEEP_RES reaches every satellite; the tiebreaker has no drbd-reactor
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        pid=$(systemctl show -p MainPID --value linstor-satellite)
+        tr '\0' '\n' < /proc/$pid/environ | grep -qx 'LS_KEEP_RES=linstor_db' || fail "satellite runs without LS_KEEP_RES"
+        {% if inventory_hostname not in groups['ha_controllers'] %}
+        if dpkg-query -W -f '${Status}' drbd-reactor 2>/dev/null | grep -q 'ok installed'; then fail "drbd-reactor on the tiebreaker"; fi
+        {% endif %}
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+- name: Remove LINSTOR with HA on
+  hosts: all
+  roles:
+    - role: ../../../../ansible-role-linstor
+      vars:
+        linstor_state: absent
+        linstor_controller_ha: true
+        linstor_remove_data: true
+  post_tasks:
+    - name: Nothing the role added remains
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for f in /etc/linstor/ssl /etc/linstor/linstor.toml /etc/linstor/linstor_satellite.toml \
+          /etc/linstor/linstor-client.conf /var/lib/linstor /etc/systemd/system/var-lib-linstor.mount \
+          /etc/drbd-reactor.d/linstor_db.toml /etc/systemd/system/linstor-satellite.service.d/50-linstor-role.conf; do
+          if [ -e "$f" ]; then fail "$f remains"; fi
+        done
+        for p in linstor-satellite linstor-controller linstor-client drbd-reactor; do
+          if dpkg-query -W -f '${Status}' $p 2>/dev/null | grep -q 'ok installed'; then fail "$p installed"; fi
+        done
+        if ss -Htln | grep -qE ':33(66|67|70|71) '; then fail "a LINSTOR port still listens"; fi
+      args:
+        executable: /bin/bash
+      changed_when: false

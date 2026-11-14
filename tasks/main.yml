@@ -19,10 +19,6 @@
     - name: Configuration and services
       ansible.builtin.include_tasks: config.yml
 
-    - name: Cluster objects
-      ansible.builtin.include_tasks: cluster.yml
-      when: linstor_cluster
-
 - name: Remove LINSTOR
   ansible.builtin.include_tasks: absent.yml
   when: linstor_state == 'absent'

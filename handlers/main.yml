@@ -1,6 +1,33 @@
 ---
+# First: a new or removed unit file is read before any restart below
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
 - name: Restart LINSTOR
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     state: restarted
-  loop: "{{ linstor_services }}"
+  loop: "{{ linstor_services | difference(['drbd-reactor']) }}"
+
+# Under HA the controller runs only where drbd-reactor started it: restart it there, never start it elsewhere
+- name: Restart the active HA controller  # noqa: command-instead-of-module (try-restart: no module has it)
+  ansible.builtin.command: systemctl try-restart linstor-controller.service
+  listen: Restart LINSTOR
+  changed_when: true
+  when: linstor_ha_controller
+
+- name: Reload drbd-reactor
+  ansible.builtin.systemd_service:
+    name: drbd-reactor
+    state: reloaded
+  # Check mode on a node new to HA: drbd-reactor is not installed yet
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: linstor_ha_controller
+
+- name: Restart the satellite on its drop-in
+  ansible.builtin.systemd_service:
+    name: linstor-satellite
+    state: restarted
+    daemon_reload: true
+  when: linstor_satellite

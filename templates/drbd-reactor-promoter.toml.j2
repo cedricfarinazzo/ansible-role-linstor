@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+[[promoter]]
+[promoter.resources.{{ linstor_controller_ha_resource }}]
+start = ["{{ linstor_ha_mount_unit | basename }}", "linstor-controller.service"]
+stop-services-on-exit = {{ linstor_controller_ha_stop_services_on_exit | lower }}
+{% if linstor_controller_ha_on_stop_failure %}
+on-stop-failure = "{{ linstor_controller_ha_on_stop_failure }}"
+{% endif %}

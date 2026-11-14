@@ -4,18 +4,19 @@ Orientation for Claude Code sessions in this repository. `AGENTS.md` is a symlin
 
 ## Purpose
 
-Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellite, controller and client, mutual TLS from PEM files the user's PKI puts on the host, and the cluster's nodes, storage pools and resource groups through the controller's REST API. Generic by design: no reference to any downstream project, host, user or network in code, defaults, docs or commit messages.
+Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellite, controller and client, mutual TLS from PEM files the user's PKI puts on the host, the cluster's nodes, storage pools, resource groups and resource definitions through the controller's REST API, and LINBIT's controller HA by drbd-reactor on any number of nodes. Generic by design: no reference to any downstream project, host, user or network in code, defaults, docs or commit messages.
 
 ## Layout
 
 - `defaults/main.yml` — every user-facing variable (`linstor_*`), with its generic default.
 - `vars/main.yml` — file paths (stores, password, stamp, TOML files), package and service lists, the API and client URLs, the controller's connector properties, node types and providers, the per-item REST bodies (`linstor_node_netif`, `linstor_rg_filter`, `linstor_rg_props`).
-- `tasks/main.yml` — `validate.yml` (every input asserted before any change), then for `present`: `certs.yml` (with TLS: the PEM files readable, key matching, not expired, chaining to the CA; before any package), `install.yml` (each package has a candidate in the configured sources, then installs by name), `stores.yml` (password generated once, key and trust stores rebuilt when the PEM files or password change), `config.yml` (TOML files, client configuration, services, then `connectors.yml`: the controller's connector properties set and the controller restarted when they differ), `cluster.yml` (nodes, storage pools, resource groups; read, then create or update; also run alone by `tasks_from`); for `absent`: `absent.yml`.
-- `templates/` — `linstor_satellite.toml.j2`, `linstor.toml.j2`, `linstor-client.conf.j2`.
-- `handlers/main.yml` — restart of the selected LINSTOR services.
+- `tasks/main.yml` — `validate.yml` (every input asserted before any change), then for `present`: `certs.yml` (with TLS: the PEM files readable, key matching, not expired, chaining to the CA; before any package), `install.yml` (each package has a candidate in the configured sources, then installs by name), `stores.yml` (password generated once, key and trust stores rebuilt when the PEM files or password change), `config.yml` (TOML files, client configuration, `ha.yml` (HA mount unit and drbd-reactor promoter on controller-capable nodes, the controller disabled; the satellite's `LS_KEEP_RES` drop-in), services, then, on a node where the controller runs, `connectors.yml` (the controller's connector properties set and the controller restarted when they differ) and `cluster.yml` (nodes, storage pools, resource groups, resource definitions spawned definitions-only then auto-placed; read, then create or update; also run alone by `tasks_from`)); for `absent`: `absent.yml`.
+- `templates/` — `linstor_satellite.toml.j2`, `linstor.toml.j2`, `linstor-client.conf.j2`, `var-lib-linstor.mount.j2`, `drbd-reactor-promoter.toml.j2`, `linstor-satellite-dropin.conf.j2`.
+- `handlers/main.yml` — systemd reload, restart of the selected LINSTOR services (under HA a `try-restart` of the controller, so a standby never starts one), drbd-reactor reload, satellite restart on its drop-in.
 - `meta/main.yml` — Galaxy metadata; `platforms` lists exactly what CI tests.
 - `molecule/default/` — one combined node per distribution: check mode on a fresh container, converge over mutual TLS with a file-thin pool and a resource group, verify (packages, root-only files, TOML, stores, listeners, mTLS refusals on 3371 and 3367 including a valid second certificate of the CA, node online over SSL, connectors), idempotence, `side_effect/` (a `--diff` run that must not print the store password, a run without the pin where the second certificate takes the satellite over, certificate renewal, then `absent` and nothing left).
 - `molecule/cluster/` — Debian 13, two containers on one network: a combined node and a satellite, certificates signed by a test CA on the controller from CSRs made on each node, the controller's certificate pinned on both satellites; verify across the network, the other node's valid certificate refused; check mode and idempotence.
+- `molecule/ha/` — Debian 13, three containers (two controller-capable combined nodes, a diskless satellite): converge with one controller (three nodes online over SSL, `place_count: 2` with quorum and the auto-tiebreaker, LINBIT's database group, `linstor_db` defined not placed, pins of both controller-capable nodes, the third node's certificate refused by every satellite, the standby's accepted), idempotence; `side_effect/` turns HA on from the control node (`ha-vars.yml`): check mode, run, rerun with no change, promoter, mount unit, controller disabled everywhere, drbd-reactor running, its promotion attempt failing and no controller left running, `LS_KEEP_RES`, then absent. No DRBD module: promotion, mount and failover are not tested.
 - `molecule/plain/` — Debian 13, a combined node without TLS: no `/etc/linstor/ssl`, plain satellite 3366 and REST 3370, SSL ports closed, node online as PLAIN, plain connector on.
 - `molecule/failure/` — Debian 13, no LINSTOR source: a missing file, a key of another pair, a certificate of another CA, an expired certificate, a missing, foreign or expired pinned controller certificate, then no package source; `converge/case.yml` records each failure, `verify/` checks it and that nothing of LINSTOR is on the host.
 - Satellite pin: `linstor_tls_controller_certs` builds `satellite-trust.jks` (only those certificates) for the satellite's `trusted_certificates`; the CA stays in `certificates.jks` for the controller. Java trusts a certificate in the store as an anchor, so another certificate of the CA chains to nothing the satellite trusts. The store also holds, per certificate, a throwaway self-signed anchor named like its issuer; its key is generated in tmpfs (`/dev/shm`), deleted right after the export, never in the store or on disk: the controller picks its client certificate by the issuer names the server lists, and without it sends none ("Empty client certificate chain"). Renewal: pin old and new together, then drop the old (README); `side_effect/` runs that overlap and `verify/` probes forged certificates under the CA's name.
@@ -25,7 +26,7 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 - `requirements.yml` — collections the role needs at runtime: none.
 - `requirements-dev.txt` — controller tooling, exact pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
-- `.github/workflows/` — `ci.yml` (lint, Galaxy description length, shellcheck, input tests, the default scenario on every distribution, the cluster, plain and failure scenarios), `pr-title.yml` (Conventional Commit title check), `release.yml` (semantic-release after `ci.yml` passes on `main`).
+- `.github/workflows/` — `ci.yml` (lint, Galaxy description length, shellcheck, input tests, the default scenario on every distribution, the cluster, plain, failure and ha scenarios), `pr-title.yml` (Conventional Commit title check), `release.yml` (semantic-release after `ci.yml` passes on `main`).
 - `renovate.json` — dependency updates.
 
 ## Conventions
@@ -41,6 +42,7 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 - **A secret never reaches the output:** tasks that read or send the store password are `no_log`; the password reaches shell tasks by environment, never in the command line; the templates holding it are `diff: false` and `no_log` (`side_effect/` greps a `--diff` run for the password).
 - **Satellite pin:** `linstor_tls_controller_certs` stops any other certificate of the CA taking a satellite from its controller (default `[]` keeps the CA trust; documented in README Security notes). Every input regex ends in `\Z`, never `$`, which lets a trailing newline through.
 - **Cluster objects are added and updated, never deleted.**
+- **Under `linstor_controller_ha` the role never enables or starts `linstor-controller`:** drbd-reactor owns it; API work runs only where it is active (`ha` side_effect checks the standby never starts one).
 - **Examples never copy a real deployment:** README and Molecule values use `example.com` names, made-up hosts and documentation addresses.
 - **GitHub Actions pinned by full commit SHA**, tag in a trailing comment.
 - **Exact pins for tooling** (`requirements-dev.txt`, `package.json`, `molecule/*/collections.yml`, `molecule/*/requirements.yml`); ranges only in `requirements.yml`. `renovate.json` is identical in the sibling roles: change them together.
@@ -67,7 +69,7 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 
 - Lint: `source .venv/bin/activate && yamllint . && ansible-lint && shellcheck run-tests.sh tests/*.sh`
 - Input tests: `tests/validate.test.sh`
-- Molecule: `./run-tests.sh debian13`, `./run-tests.sh -s cluster debian13`, `./run-tests.sh -s plain debian13`, `./run-tests.sh -s failure debian13`, all distros in parallel: `./run-tests.sh all`
+- Molecule: `./run-tests.sh debian13`, `./run-tests.sh -s cluster debian13`, `./run-tests.sh -s plain debian13`, `./run-tests.sh -s failure debian13`, `./run-tests.sh -s ha debian13`, all distros in parallel: `./run-tests.sh all`
 
 ## Gotchas
 
@@ -79,9 +81,11 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 - DRBD options are stored in DRBD's base units: `c-max-rate` in KiB/s (`70M` = `71680`); LINSTOR rejects `70M` in a property.
 - A storage pool's driver pool is `StorDriver/StorPoolName` for every provider (LINSTOR shows `/srv/pool` for a file pool).
 - Minimal container images drop `/usr/share/man`: the JRE's postinst fails on its man page alternative (Ubuntu). The scenarios' prepare makes `/usr/share/man/man1`.
-- A container has no LVM, ZFS or DRBD module: the scenarios use file-thin pools and never spawn a resource.
+- A container has no LVM, ZFS or DRBD module: the scenarios use file-thin pools and never place a resource (`ha` defines `linstor_db` with `place: false`).
+- Molecule interpolates `$` in `molecule.yml`, even inside a Jinja regex: `'^(.*)$'` fails with "Invalid placeholder"; avoid `$` there.
 - Ansible's `sequence` test is true for a mapping: list inputs are also asserted `is not mapping`.
 - Molecule's `galaxy` dependency installs roles into `~/.ansible/roles` and fails on the second run: the scenarios use a `shell` dependency into the ephemeral directory.
+- drbd-reactor fails to start in a container (`drbdadm --version` reports no kernel module, `drbdsetup events2` exits): `ha` side_effect puts stubs first on drbd-reactor's PATH only. It then tries to promote at start, fails, and stops any running `linstor-controller`: under HA no controller runs in CI.
 - `openssl verify` also fails on an expired certificate: expiry is checked first, so the message names the right cause.
 
 ## Self Improvement Loop

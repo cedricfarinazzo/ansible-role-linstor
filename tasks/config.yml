@@ -50,6 +50,9 @@
     mode: "0644"
   when: linstor_client and not (ansible_check_mode and linstor_client_dir is changed)
 
+- name: Controller HA units and the satellite drop-in
+  ansible.builtin.include_tasks: ha.yml
+
 # Check mode on a fresh host: the packages are not installed, so their units are unknown
 - name: Services are enabled and running
   ansible.builtin.systemd_service:
@@ -62,6 +65,19 @@
 - name: Restart on changed files before talking to the controller
   ansible.builtin.meta: flush_handlers
 
+# Under HA only the node drbd-reactor started the controller on talks to it; the others skip the API
+- name: Find whether the controller runs here
+  ansible.builtin.systemd_service:
+    name: linstor-controller
+  register: linstor_controller_state
+  failed_when: false
+  check_mode: false
+  when: linstor_ha_controller
+
 - name: Controller connectors
   ansible.builtin.include_tasks: connectors.yml
-  when: linstor_controller
+  when: linstor_controller and linstor_controller_here
+
+- name: Cluster objects
+  ansible.builtin.include_tasks: cluster.yml
+  when: linstor_cluster and linstor_controller_here

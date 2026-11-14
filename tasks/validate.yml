@@ -41,6 +41,19 @@
       - linstor_storage_pools is sequence and linstor_storage_pools is not string and linstor_storage_pools is not mapping
       - linstor_resource_groups is sequence and linstor_resource_groups is not string
       - linstor_resource_groups is not mapping
+      - linstor_resource_definitions is sequence and linstor_resource_definitions is not string
+      - linstor_resource_definitions is not mapping
+      - linstor_controller_ha is boolean
+      - linstor_controller_ha_resource is string and linstor_controller_ha_resource is match('^[A-Za-z][A-Za-z0-9_-]{0,47}\Z')
+      - linstor_controller_ha_fstype in ['ext4', 'xfs']
+      - linstor_controller_ha_mount_options is string and linstor_controller_ha_mount_options is match('^[A-Za-z0-9=,._-]+\Z')
+      # TOML basic string: no quote, backslash or control character
+      - linstor_controller_ha_on_stop_failure is string
+      - linstor_controller_ha_on_stop_failure is match('^[^"\\\\\x00-\x1f\x7f]*\Z')
+      - linstor_controller_ha_stop_services_on_exit is boolean
+      - linstor_satellite_keep_resources is sequence and linstor_satellite_keep_resources is not string
+      - linstor_satellite_keep_resources is not mapping
+      - linstor_satellite_keep_resources | map('string') | reject('match', '^[A-Za-z][A-Za-z0-9_-]{0,47}\Z') | list | length == 0
     fail_msg: >-
       linstor_state present|absent; linstor_satellite, linstor_controller, linstor_client booleans, one true;
       linstor_packages_extra a list of package names; linstor_controller_db_connection_url '' or a jdbc: or etcd://
@@ -49,8 +62,25 @@
       linstor_controller_plain_connector, linstor_cluster (controller only) and linstor_remove_data booleans;
       linstor_client_config an absolute path; linstor_client_controllers '' or linstor[+ssl]:// URLs;
       linstor_api_url '' or an http(s) URL without a path; linstor_wait_retries above 0; linstor_nodes,
-      linstor_storage_pools and linstor_resource_groups lists
+      linstor_storage_pools, linstor_resource_groups and linstor_resource_definitions lists;
+      linstor_controller_ha a boolean, its resource a name, fstype ext4|xfs, mount options [A-Za-z0-9=,._-],
+      on-stop-failure without quote, backslash or control character; linstor_satellite_keep_resources resource names
     quiet: true
+
+# Under HA every controller reads the same database: the connector's store password is in it, and the embedded
+# database is what the DRBD resource carries
+- name: Controller HA settings are sound
+  ansible.builtin.assert:
+    that:
+      - not linstor_controller or linstor_controller_db_connection_url | length == 0
+      - not (linstor_controller and linstor_tls) or linstor_tls_store_password | length > 0
+      - not linstor_client or linstor_client_controllers | length > 0
+    fail_msg: >-
+      linstor_controller_ha: a controller keeps the embedded database (linstor_controller_db_connection_url ''),
+      with TLS sets linstor_tls_store_password (the same on every controller), and a client lists every controller
+      in linstor_client_controllers
+    quiet: true
+  when: linstor_state == 'present' and linstor_controller_ha
 
 - name: TLS files are named
   ansible.builtin.assert:
@@ -114,8 +144,9 @@
   ansible.builtin.assert:
     that:
       - item is mapping
-      - item.keys() | difference(['name', 'place_count', 'storage_pools', 'drbd_options', 'properties', 'description'])
-        | length == 0
+      - item.keys() | difference(['name', 'place_count', 'storage_pools', 'diskless_on_remaining', 'drbd_options',
+        'properties', 'description']) | length == 0
+      - item.diskless_on_remaining | default(false) is boolean
       - item.name is defined and item.name is string and item.name is match('^[A-Za-z][A-Za-z0-9_-]{0,47}\Z')
       - item.place_count is not defined or (item.place_count | string is match('^[0-9]+\Z') and item.place_count | int > 0)
       - item.storage_pools | default([]) is sequence and item.storage_pools | default([]) is not string
@@ -129,10 +160,37 @@
       - item.description | default('') is string and item.description | default('') is match('^[^\x00-\x1f\x7f]*\Z')
       - linstor_resource_groups | map(attribute='name') | select('equalto', item.name) | list | length == 1
     fail_msg: >-
-      {{ item.name | default('?') }}: keys name, place_count (above 0), storage_pools (list), drbd_options (keys
+      {{ item.name | default('?') }}: keys name, place_count (above 0), storage_pools (list), diskless_on_remaining
+      (boolean), drbd_options (keys
       without the DrbdOptions/ prefix, e.g. PeerDevice/c-max-rate), properties (mapping), description; a unique name
     quiet: true
   loop: "{{ linstor_resource_groups }}"
+  loop_control:
+    label: "{{ item.name | default(item) }}"
+  when: linstor_state == 'present'
+
+- name: Each resource definition is well formed
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.keys() | difference(['name', 'resource_group', 'size_mib', 'place', 'drbd_options', 'properties']) | length == 0
+      - item.name is defined and item.name is string and item.name is match('^[A-Za-z][A-Za-z0-9_-]{0,47}\Z')
+      - item.resource_group is defined and item.resource_group is string
+      - item.resource_group is match('^[A-Za-z][A-Za-z0-9_-]{0,47}\Z')
+      - item.size_mib is defined and item.size_mib | string is match('^[0-9]+\Z') and item.size_mib | int > 0
+      - item.place | default(true) is boolean
+      - item.drbd_options | default({}) is mapping and item.properties | default({}) is mapping
+      - (item.drbd_options | default({}) | dict2items + item.properties | default({}) | dict2items)
+        | map(attribute='key') | reject('match', '^[A-Za-z0-9/_.-]+\Z') | list | length == 0
+      - (item.drbd_options | default({}) | dict2items + item.properties | default({}) | dict2items)
+        | map(attribute='value') | map('string') | reject('match', '^[^\x00-\x1f\x7f]*\Z') | list | length == 0
+      - item.drbd_options | default({}) | dict2items | map(attribute='key') | select('match', '^DrbdOptions/') | list | length == 0
+      - linstor_resource_definitions | map(attribute='name') | select('equalto', item.name) | list | length == 1
+    fail_msg: >-
+      {{ item.name | default('?') }}: keys name, resource_group, size_mib (above 0), place (boolean), drbd_options
+      (keys without the DrbdOptions/ prefix), properties (mapping); a unique name
+    quiet: true
+  loop: "{{ linstor_resource_definitions }}"
   loop_control:
     label: "{{ item.name | default(item) }}"
   when: linstor_state == 'present'
