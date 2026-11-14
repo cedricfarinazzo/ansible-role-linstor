@@ -55,6 +55,32 @@ bad "controller certificates as a mapping" "{$T, \"linstor_tls_controller_certs\
 bad "a relative controller certificate" "{$T, \"linstor_tls_controller_certs\": [\"c.crt\"]}"
 bad "a controller certificate with a trailing newline" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl/c.crt\\n\"]}"
 bad "controller certificates without TLS" '{"linstor_tls_controller_certs": ["/etc/ssl/c.crt"]}'
+# Embedded (not only trailing) newline and carriage return in every free-text input
+bad "a database password with an embedded CR" '{"linstor_controller_db_password": "abc\rdef"}'
+bad "a database user with an embedded newline" '{"linstor_controller_db_user": "lin\nstor"}'
+bad "a database URL with an embedded newline" '{"linstor_controller_db_connection_url": "jdbc:postgresql://db/x\ny"}'
+bad "a database URL with an embedded CR" '{"linstor_controller_db_connection_url": "jdbc:postgresql://db/x\ry"}'
+bad "a store password with an embedded newline" '{"linstor_tls_store_password": "abcdef\nghijkl"}'
+bad "a bind address with an embedded CR" '{"linstor_satellite_bind_address": "10.0.\r0.1"}'
+bad "a client config path with an embedded newline" '{"linstor_client_config": "/etc/linstor\n/c.conf"}'
+bad "client controllers with an embedded newline" '{"linstor_client": true, "linstor_client_controllers": "linstor://a\n,linstor://b"}'
+bad "an API URL with an embedded CR" '{"linstor_api_url": "https://10.0.0.1\r:3371"}'
+bad "an extra package with an embedded newline" '{"linstor_packages_extra": ["drbd\nreactor"]}'
+bad "a TLS file path with an embedded CR" "{$T, \"linstor_tls_key\": \"/etc/ssl\\r/node.key\"}"
+bad "a controller certificate with an embedded newline" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl\\n/c.crt\"]}"
+bad "a node name with an embedded newline" '{"linstor_nodes": [{"name": "a\nb", "address": "10.0.0.1"}]}'
+bad "a node address with an embedded CR" '{"linstor_nodes": [{"name": "a", "address": "10.0\r.0.1"}]}'
+bad "a pool name with an embedded newline" '{"linstor_storage_pools": [{"name": "p\nq", "node": "a", "provider": "lvm", "pool": "vg"}]}'
+bad "a driver pool with an embedded CR" '{"linstor_storage_pools": [{"name": "p", "node": "a", "provider": "lvm", "pool": "vg\r/thin"}]}'
+bad "a pool property key with an embedded newline" '{"linstor_storage_pools": [{"name": "p", "node": "a", "provider": "lvm", "pool": "vg", "properties": {"Pref\nNic": "x"}}]}'
+bad "a pool property value with an embedded newline" '{"linstor_storage_pools": [{"name": "p", "node": "a", "provider": "lvm", "pool": "vg", "properties": {"PrefNic": "data\nAux/x"}}]}'
+bad "a pool property value with an embedded CR" '{"linstor_storage_pools": [{"name": "p", "node": "a", "provider": "lvm", "pool": "vg", "properties": {"PrefNic": "data\rx"}}]}'
+bad "a group pool list item with an embedded newline" '{"linstor_resource_groups": [{"name": "rg", "storage_pools": ["pool\nother"]}]}'
+bad "a DRBD option key with an embedded newline" '{"linstor_resource_groups": [{"name": "rg", "drbd_options": {"Net/\ntls": "yes"}}]}'
+bad "a DRBD option value with an embedded newline" '{"linstor_resource_groups": [{"name": "rg", "drbd_options": {"Net/tls": "no\nNet/verify-alg=x"}}]}'
+bad "a DRBD option value with an embedded CR" '{"linstor_resource_groups": [{"name": "rg", "drbd_options": {"Net/tls": "no\ryes"}}]}'
+bad "a group property value with an embedded newline" '{"linstor_resource_groups": [{"name": "rg", "properties": {"Aux/team": "a\nb"}}]}'
+bad "a group description with an embedded newline" '{"linstor_resource_groups": [{"name": "rg", "description": "VM\ndisks"}]}'
 bad "an unknown state" '{"linstor_state": "latest"}'
 bad "satellite as a string" '{"linstor_satellite": "yes"}'
 bad "nothing selected" '{"linstor_satellite": false}'

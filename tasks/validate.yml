@@ -96,6 +96,9 @@
       - item.properties | default({}) is mapping
       - item.properties | default({}) | dict2items | map(attribute='key') | reject('match', '^[A-Za-z0-9/_.-]+\Z')
         | list | length == 0
+      # A control character in a value would smuggle a second line into the request or the CLI
+      - item.properties | default({}) | dict2items | map(attribute='value') | map('string')
+        | reject('match', '^[^\x00-\x1f\x7f]*\Z') | list | length == 0
       - linstor_storage_pools | selectattr('name', 'equalto', item.name) | selectattr('node', 'equalto', item.node)
         | list | length == 1
     fail_msg: >-
@@ -116,11 +119,14 @@
       - item.name is defined and item.name is string and item.name is match('^[A-Za-z][A-Za-z0-9_-]{0,47}\Z')
       - item.place_count is not defined or (item.place_count | string is match('^[0-9]+\Z') and item.place_count | int > 0)
       - item.storage_pools | default([]) is sequence and item.storage_pools | default([]) is not string
+      - item.storage_pools | default([]) | map('string') | reject('match', '^[A-Za-z][A-Za-z0-9_-]{0,47}\Z') | list | length == 0
       - item.drbd_options | default({}) is mapping and item.properties | default({}) is mapping
       - (item.drbd_options | default({}) | dict2items + item.properties | default({}) | dict2items)
         | map(attribute='key') | reject('match', '^[A-Za-z0-9/_.-]+\Z') | list | length == 0
+      - (item.drbd_options | default({}) | dict2items + item.properties | default({}) | dict2items)
+        | map(attribute='value') | map('string') | reject('match', '^[^\x00-\x1f\x7f]*\Z') | list | length == 0
       - item.drbd_options | default({}) | dict2items | map(attribute='key') | select('match', '^DrbdOptions/') | list | length == 0
-      - item.description | default('') is string
+      - item.description | default('') is string and item.description | default('') is match('^[^\x00-\x1f\x7f]*\Z')
       - linstor_resource_groups | map(attribute='name') | select('equalto', item.name) | list | length == 1
     fail_msg: >-
       {{ item.name | default('?') }}: keys name, place_count (above 0), storage_pools (list), drbd_options (keys
