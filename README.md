@@ -9,6 +9,21 @@ LINSTOR's satellite port and REST API have no authentication of their own. This 
 
 ## 🚀 Quick Start
 
+Install from Ansible Galaxy ([cedricfarinazzo.linstor](https://galaxy.ansible.com/cedricfarinazzo/linstor), [cedricfarinazzo.drbd](https://galaxy.ansible.com/cedricfarinazzo/drbd)), pinned to a release:
+
+```yaml
+# requirements.yml
+roles:
+  - name: cedricfarinazzo.linstor
+    version: 1.1.0
+  - name: cedricfarinazzo.drbd
+    version: 2.2.1
+```
+
+```bash
+ansible-galaxy role install -r requirements.yml
+```
+
 ```yaml
 # DRBD 9 and LINBIT's source first (cedricfarinazzo.drbd), then LINSTOR
 - hosts: storage
@@ -370,7 +385,7 @@ source .venv/bin/activate && yamllint . && ansible-lint && shellcheck run-tests.
 
 ## 🚢 Releases
 
-Once CI passes on `main`, [semantic-release](https://github.com/semantic-release/semantic-release) cuts the version from [Conventional Commits](https://www.conventionalcommits.org/): `fix:` releases a patch, `feat:` a minor, a `!` or `BREAKING CHANGE:` footer a major. A squash merge lands the pull request title (checked in CI). Each release gets a bare semver tag (`1.2.3`) and GitHub release notes; Ansible Galaxy imports the new tag from the repository. [Renovate](https://docs.renovatebot.com/) keeps the tooling and the pinned GitHub Actions up to date.
+Once CI passes on `main`, [semantic-release](https://github.com/semantic-release/semantic-release) cuts the version from [Conventional Commits](https://www.conventionalcommits.org/): `fix:` releases a patch, `feat:` a minor, a `!` or `BREAKING CHANGE:` footer a major. A squash merge lands the pull request title (checked in CI), a merge commit lands each branch commit, so both must follow the convention. Each release gets a bare semver tag (`1.2.3`) and GitHub release notes; Ansible Galaxy imports the new tag from the repository. [Renovate](https://docs.renovatebot.com/) keeps the tooling and the pinned GitHub Actions up to date.
 
 ## 📦 Dependencies
 
@@ -380,3 +395,7 @@ Once CI passes on `main`, [semantic-release](https://github.com/semantic-release
 ## 👥 Authors & Contributors
 
 **Cédric Farinazzo** ([@cedricfarinazzo](https://github.com/cedricfarinazzo)) - *Author and Maintainer*
+
+## 📄 License
+
+MIT, see [LICENSE](LICENSE).
