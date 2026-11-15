@@ -15,7 +15,7 @@ Install from Ansible Galaxy ([cedricfarinazzo.linstor](https://galaxy.ansible.co
 # requirements.yml
 roles:
   - name: cedricfarinazzo.linstor
-    version: 1.1.0
+    version: 1.1.1
   - name: cedricfarinazzo.drbd
     version: 2.2.1
 ```
