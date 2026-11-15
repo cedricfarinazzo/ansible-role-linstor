@@ -4,4 +4,4 @@ roles:
   - name: cedricfarinazzo.drbd
     src: https://github.com/cedricfarinazzo/ansible-role-drbd
     scm: git
-    version: 1.1.0
+    version: 2.2.1
