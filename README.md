@@ -182,11 +182,11 @@ Set from the controller (`linstor_cluster`, on by default there) through `linsto
 ```yaml
 linstor_nodes:
   - name: node-a                # the node's host name (uname -n)
-    address: 10.0.0.1
+    address: 192.0.2.1
     type: combined              # satellite (default), combined, controller, auxiliary
     # encryption: ssl           # ssl under linstor_tls, else plain; port 3367 / 3366
   - name: node-b
-    address: 10.0.0.2
+    address: 192.0.2.2
 linstor_storage_pools:
   - name: pool-vm
     node: node-a
@@ -229,9 +229,9 @@ linstor_tls_key: /etc/ssl/linstor/node.key
 linstor_tls_ca: /etc/ssl/linstor/ca.crt
 linstor_controller: "{{ inventory_hostname == 'node-a' }}"
 linstor_nodes:
-  - {name: node-a, address: 10.0.0.1, type: combined}
-  - {name: node-b, address: 10.0.0.2}
-  - {name: node-c, address: 10.0.0.3}
+  - {name: node-a, address: 192.0.2.1, type: combined}
+  - {name: node-b, address: 192.0.2.2}
+  - {name: node-c, address: 192.0.2.3}
 ```
 
 ### Three nodes: two controller-capable, a diskless tiebreaker, controller HA
@@ -248,11 +248,11 @@ linstor_tls_controller_certs:
   - /etc/ssl/linstor/node-b.crt
 linstor_controller_ha: true
 linstor_controller: "{{ inventory_hostname in ['node-a', 'node-b'] }}"
-linstor_client_controllers: linstor+ssl://10.0.0.1:3371,linstor+ssl://10.0.0.2:3371
+linstor_client_controllers: linstor+ssl://192.0.2.1:3371,linstor+ssl://192.0.2.2:3371
 linstor_nodes:
-  - {name: node-a, address: 10.0.0.1, type: combined}
-  - {name: node-b, address: 10.0.0.2, type: combined}
-  - {name: node-c, address: 10.0.0.3}
+  - {name: node-a, address: 192.0.2.1, type: combined}
+  - {name: node-b, address: 192.0.2.2, type: combined}
+  - {name: node-c, address: 192.0.2.3}
 linstor_storage_pools:
   - {name: pool-vm, node: node-a, provider: lvm_thin, pool: vg0/thin0}
   - {name: pool-vm, node: node-b, provider: lvm_thin, pool: vg0/thin0}
@@ -275,12 +275,12 @@ linstor_tls_controller_certs:
   - /etc/ssl/linstor/node-c.crt
 linstor_controller_ha: true
 linstor_controller: "{{ inventory_hostname in ['node-a', 'node-b', 'node-c'] }}"
-linstor_client_controllers: linstor+ssl://10.0.0.1:3371,linstor+ssl://10.0.0.2:3371,linstor+ssl://10.0.0.3:3371
+linstor_client_controllers: linstor+ssl://192.0.2.1:3371,linstor+ssl://192.0.2.2:3371,linstor+ssl://192.0.2.3:3371
 linstor_nodes:
-  - {name: node-a, address: 10.0.0.1, type: combined}
-  - {name: node-b, address: 10.0.0.2, type: combined}
-  - {name: node-c, address: 10.0.0.3, type: combined}
-  - {name: node-d, address: 10.0.0.4}
+  - {name: node-a, address: 192.0.2.1, type: combined}
+  - {name: node-b, address: 192.0.2.2, type: combined}
+  - {name: node-c, address: 192.0.2.3, type: combined}
+  - {name: node-d, address: 192.0.2.4}
 linstor_storage_pools:
   - {name: pool-vm, node: node-a, provider: lvm_thin, pool: vg0/thin0}
   - {name: pool-vm, node: node-b, provider: lvm_thin, pool: vg0/thin0}
@@ -314,7 +314,7 @@ linstor_resource_definitions:
 ```yaml
 linstor_controller: true
 linstor_nodes:
-  - {name: node-a, address: 10.0.0.1, type: combined}
+  - {name: node-a, address: 192.0.2.1, type: combined}
 ```
 
 ### Cluster objects in a later play, once every satellite runs
