@@ -68,12 +68,20 @@
   ansible.builtin.shell: |
     set -euo pipefail
     umask 077
-    want=$( (cat {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
+    want=$( (cat {{ linstor_satellite_pins | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
     if [ -s {{ linstor_satellite_truststore | quote }} ] &&
        [ "$(cat {{ linstor_satellite_trust_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
+    # "dropped": the running store is the same pins plus the previous pin this run drops
+    built=built
+    {% if linstor_controller_previous_state.stdout | default('') == 'drop' %}
+    p={{ linstor_tls_controller_cert_previous | quote }}
+    if [ -s "$p" ] && [ "$(cat {{ linstor_satellite_trust_stamp | quote }} 2>/dev/null)" = \
+         "$( (cat {{ linstor_satellite_pins | map('quote') | join(' ') }} "$p"; printf %s "$P") | sha256sum | cut -d' ' -f1)" ]
+    then built=dropped; fi
+    {% endif %}
     t=$(mktemp -d); m=$(mktemp -d -p /dev/shm); trap 'rm -rf "$t" "$m"' EXIT
     i=0
-    for f in {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; do
+    for f in {{ linstor_satellite_pins | map('quote') | join(' ') }}; do
       keytool -importcert -noprompt -alias "controller$i" -file "$f" \
         -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
       issuer=$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$f" | sed 's/^issuer= *//')
@@ -91,6 +99,7 @@
     chmod 0640 "$t/satellite-trust.jks"
     mv "$t/satellite-trust.jks" {{ linstor_satellite_truststore | quote }}
     echo "$want" > {{ linstor_satellite_trust_stamp | quote }}
+    echo "$built"
   args:
     executable: /bin/bash
   environment:
@@ -101,8 +110,21 @@
     - linstor_satellite
     - linstor_tls_controller_certs | length > 0
     - not (ansible_check_mode and linstor_ssl_dir_made is changed)
-  changed_when: linstor_satellite_trust_built.stdout != 'unchanged'
+  # A drop alone restarts nothing without linstor_tls_controller_cert_previous_restart: the satellite reads the
+  # rebuilt store at its next start; the deletion below reports the change
+  changed_when: >-
+    linstor_satellite_trust_built.stdout == 'built'
+    or (linstor_satellite_trust_built.stdout == 'dropped' and linstor_tls_controller_cert_previous_restart)
   notify: Restart LINSTOR
+
+# The run after a renewal: the copy is current, the controller presents it
+- name: No previous pin once the copy is current
+  ansible.builtin.file:
+    path: "{{ linstor_tls_controller_cert_previous }}"
+    state: absent
+  when:
+    - linstor_controller_cert_copy_due and linstor_tls_controller_cert_previous | length > 0
+    - linstor_controller_previous_state.stdout | default('') != 'keep'
 
 - name: No satellite trust store without controller certificates
   ansible.builtin.file:

@@ -43,6 +43,7 @@ provisioner:
     prepare: prepare/playbook.yml
     converge: converge/playbook.yml
     verify: verify/playbook.yml
+    side_effect: side_effect/playbook.yml
   inventory:
     group_vars:
       all:
@@ -57,6 +58,8 @@ provisioner:
         # The satellite copies it from the controller; the controller itself copies nothing
         linstor_tls_controller_cert_from: "{{ molecule_controller }}"
         linstor_tls_controller_cert_copy: /root/pki/controller.crt
+        # The copy a renewal replaces stays pinned until the next run (side_effect)
+        linstor_tls_controller_cert_previous: /root/pki/controller.previous.crt
         molecule_controller: "{{ groups['controllers'] | first }}"
         molecule_node:
           name: "{{ ansible_facts.hostname }}"
@@ -97,4 +100,5 @@ scenario:
     - converge
     - verify
     - idempotence
+    - side_effect
     - destroy

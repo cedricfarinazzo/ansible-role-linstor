@@ -46,13 +46,46 @@
 
 - name: Directory of the controller's certificate copy
   ansible.builtin.file:
-    path: "{{ linstor_tls_controller_cert_copy | dirname }}"
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop: >-
+    {{ ([linstor_tls_controller_cert_copy] + ([linstor_tls_controller_cert_previous]
+        if linstor_tls_controller_cert_previous | length > 0 else [])) | map('dirname') | unique | list }}
   when: linstor_controller_cert_copy_due
 
+# A renewed controller certificate reaches the satellite before the controller's own run restarts it, so the
+# controller still presents the old one: the copy being replaced stays pinned, while valid, until the next run
+- name: Is the copy being replaced still a usable pin
+  ansible.builtin.shell: |
+    set -uo pipefail
+    c={{ linstor_tls_controller_cert_copy | quote }}
+    if [ ! -s "$c" ] || cmp -s "$c" -; then echo drop; exit 0; fi
+    if openssl x509 -noout -checkend 0 -in "$c" > /dev/null 2>&1 &&
+       openssl verify -CAfile {{ linstor_tls_ca | quote }} "$c" > /dev/null 2>&1; then echo keep; else echo drop; fi
+  args:
+    executable: /bin/bash
+    stdin: "{{ linstor_controller_pem.content | b64decode }}"
+    stdin_add_newline: false
+  register: linstor_controller_previous_state
+  changed_when: false
+  check_mode: false
+  when: linstor_controller_cert_copy_due and linstor_tls_controller_cert_previous | length > 0
+
+- name: The copy being replaced, kept as the previous pin
+  ansible.builtin.copy:
+    src: "{{ linstor_tls_controller_cert_copy }}"
+    remote_src: true
+    dest: "{{ linstor_tls_controller_cert_previous }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: linstor_controller_previous_pem
+  when: linstor_controller_previous_state.stdout | default('') == 'keep'
+
+# A previous pin no longer kept is deleted after the trust store is rebuilt (stores.yml)
 - name: Copy of the controller's certificate
   ansible.builtin.copy:
     content: "{{ linstor_controller_pem.content | b64decode }}"
@@ -64,7 +97,7 @@
   when: linstor_controller_cert_copy_due
 
 # A pinned controller certificate that is wrong would leave the satellite refusing its own controller. Check mode
-# writes no copy: a copy it would change is not on the host yet
+# writes no copy: a copy or previous pin it would change is not on the host yet
 - name: Check the controller certificates the satellite pins
   ansible.builtin.shell: |
     set -uo pipefail
@@ -77,8 +110,10 @@
   args:
     executable: /bin/bash
   loop: >-
-    {{ linstor_tls_controller_certs | reject('equalto', linstor_tls_controller_cert_copy) | list
-       if ansible_check_mode and linstor_controller_pem_copy is changed else linstor_tls_controller_certs }}
+    {{ linstor_satellite_pins | reject('in',
+         ([linstor_tls_controller_cert_copy] if ansible_check_mode and linstor_controller_pem_copy is changed else [])
+         + ([linstor_tls_controller_cert_previous] if ansible_check_mode and linstor_controller_previous_pem is changed
+            else [])) | list }}
   register: linstor_pin_check
   changed_when: false
   failed_when: false

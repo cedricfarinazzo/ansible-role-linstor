@@ -42,6 +42,16 @@ bad "a copy host without a copy path" "{$T, $C, \"linstor_tls_controller_cert_fr
 bad "a copy path without a host" "{$T, $C, \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
 bad "a copy host as a list" "{$T, $C, \"linstor_tls_controller_cert_from\": [\"ctrl.example.com\"], \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
 bad "a relative copy path" "{$T, \"linstor_tls_controller_certs\": [\"ctrl.crt\"], \"linstor_tls_controller_cert_from\": \"localhost\", \"linstor_tls_controller_cert_copy\": \"ctrl.crt\"}"
+P='"linstor_tls_controller_cert_from": "ctrl.example.com", "linstor_tls_controller_cert_copy": "/etc/ssl/ctrl.crt"'
+good "the replaced copy kept as the previous pin" "{$T, $C, $P, \"linstor_tls_controller_cert_previous\": \"/etc/ssl/ctrl.previous.crt\"}"
+bad "a previous pin without a copy" "{$T, $C, \"linstor_tls_controller_cert_previous\": \"/etc/ssl/ctrl.previous.crt\"}"
+bad "a previous pin on the copy's path" "{$T, $C, $P, \"linstor_tls_controller_cert_previous\": \"/etc/ssl/ctrl.crt\"}"
+bad "a previous pin listed in the pinned certificates" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl/ctrl.crt\", \"/etc/ssl/old.crt\"], $P, \"linstor_tls_controller_cert_previous\": \"/etc/ssl/old.crt\"}"
+bad "a relative previous pin" "{$T, $C, $P, \"linstor_tls_controller_cert_previous\": \"ctrl.previous.crt\"}"
+bad "a previous pin ending in a newline" "{$T, $C, $P, \"linstor_tls_controller_cert_previous\": \"/etc/ssl/old.crt\\n\"}"
+good "the previous pin dropped without a restart" "{$T, $C, $P, \"linstor_tls_controller_cert_previous\": \"/etc/ssl/old.crt\", \"linstor_tls_controller_cert_previous_restart\": false}"
+bad "a drop restart as a string" "{$T, $C, $P, \"linstor_tls_controller_cert_previous_restart\": \"false\"}"
+bad "a previous pin as a list" "{$T, $C, $P, \"linstor_tls_controller_cert_previous\": [\"/etc/ssl/old.crt\"]}"
 bad "a copy path ending in a newline" "{$T, $C, \"linstor_tls_controller_cert_from\": \"localhost\", \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\\n\"}"
 good "a combined node over TLS" "{$T, \"linstor_controller\": true}"
 good "a client only" '{"linstor_satellite": false, "linstor_client": true, "linstor_client_controllers": "linstor+ssl://ctrl.example.com:3371,linstor+ssl://ctrl2.example.com"}'

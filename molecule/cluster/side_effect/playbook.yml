@@ -1,0 +1,12 @@
+---
+# Two renewals of the controller's certificate (renewal.yml): the drop of the previous pin restarts the satellite,
+# then, with linstor_tls_controller_cert_previous_restart false, it does not
+- name: Renewal, the drop restarts the satellite
+  ansible.builtin.import_playbook: renewal.yml
+  vars:
+    molecule_drop_restart: true
+
+- name: Renewal, the drop restarts nothing
+  ansible.builtin.import_playbook: renewal.yml
+  vars:
+    molecule_drop_restart: false
