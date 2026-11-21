@@ -54,6 +54,9 @@ provisioner:
         # Every satellite accepts the controller's certificate only, not the other node's of the same CA
         linstor_tls_controller_certs:
           - /root/pki/controller.crt
+        # The satellite copies it from the controller; the controller itself copies nothing
+        linstor_tls_controller_cert_from: "{{ molecule_controller }}"
+        linstor_tls_controller_cert_copy: /root/pki/controller.crt
         molecule_controller: "{{ groups['controllers'] | first }}"
         molecule_node:
           name: "{{ ansible_facts.hostname }}"

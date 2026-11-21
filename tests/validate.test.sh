@@ -19,7 +19,8 @@ cat > "$WORK/play.yml" <<'PLAY'
         tasks_from: validate.yml
 PLAY
 fails=0
-run() { ANSIBLE_ROLES_PATH=$WORK/roles ansible-playbook -i localhost, -c local -e "$1" "$WORK/play.yml" > "$WORK/out" 2>&1; }
+# ctrl.example.com: an inventory host a satellite may copy the controller's certificate from; never contacted
+run() { ANSIBLE_ROLES_PATH=$WORK/roles ansible-playbook -i localhost,ctrl.example.com, -c local -e "$1" "$WORK/play.yml" > "$WORK/out" 2>&1; }
 good() { if run "$2"; then echo "ok   accepted: $1"; else echo "FAIL rejected a good input: $1" >&2; tail -5 "$WORK/out" >&2; fails=$((fails + 1)); fi; }
 # Rejected by an assert, never by a templating crash: that would pass for the wrong reason.
 bad() {
@@ -32,6 +33,16 @@ T='"linstor_tls": true, "linstor_tls_cert": "/etc/ssl/node.crt", "linstor_tls_ke
 good "defaults (a plain satellite)" '{}'
 good "state absent, nothing selected" '{"linstor_state": "absent", "linstor_satellite": false}'
 good "a pinned controller certificate" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl/ctrl.crt\"]}"
+C='"linstor_tls_controller_certs": ["/etc/ssl/ctrl.crt"]'
+good "the controller's certificate copied from another host" "{$T, $C, \"linstor_tls_controller_cert_from\": \"ctrl.example.com\", \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
+good "the host named copies nothing: its own pins need not list the copy" "{$T, \"linstor_tls_controller_certs\": [\"/etc/ssl/node.crt\"], \"linstor_tls_controller_cert_from\": \"localhost\", \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
+bad "a copy from a host not in the inventory" "{$T, $C, \"linstor_tls_controller_cert_from\": \"other.example.com\", \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
+bad "a copy not in the pinned certificates" "{$T, $C, \"linstor_tls_controller_cert_from\": \"ctrl.example.com\", \"linstor_tls_controller_cert_copy\": \"/etc/ssl/other.crt\"}"
+bad "a copy host without a copy path" "{$T, $C, \"linstor_tls_controller_cert_from\": \"ctrl.example.com\"}"
+bad "a copy path without a host" "{$T, $C, \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
+bad "a copy host as a list" "{$T, $C, \"linstor_tls_controller_cert_from\": [\"ctrl.example.com\"], \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\"}"
+bad "a relative copy path" "{$T, \"linstor_tls_controller_certs\": [\"ctrl.crt\"], \"linstor_tls_controller_cert_from\": \"localhost\", \"linstor_tls_controller_cert_copy\": \"ctrl.crt\"}"
+bad "a copy path ending in a newline" "{$T, $C, \"linstor_tls_controller_cert_from\": \"localhost\", \"linstor_tls_controller_cert_copy\": \"/etc/ssl/ctrl.crt\\n\"}"
 good "a combined node over TLS" "{$T, \"linstor_controller\": true}"
 good "a client only" '{"linstor_satellite": false, "linstor_client": true, "linstor_client_controllers": "linstor+ssl://ctrl.example.com:3371,linstor+ssl://ctrl2.example.com"}'
 good "every option set" "{$T, \"linstor_controller\": true, \"linstor_packages_extra\": [\"drbd-reactor\"], \"linstor_controller_db_connection_url\": \"jdbc:postgresql://db.example.com/linstor\", \"linstor_controller_db_user\": \"linstor\", \"linstor_controller_db_password\": \"s3cret pass\", \"linstor_tls_protocol\": \"TLSv1.2\", \"linstor_tls_store_password\": \"abcdefghijkl\", \"linstor_satellite_bind_address\": \"10.0.0.1\", \"linstor_controller_http_listen\": \"::1\", \"linstor_api_url\": \"https://10.0.0.1:3371\", \"linstor_wait_retries\": 10, \"linstor_remove_data\": true}"

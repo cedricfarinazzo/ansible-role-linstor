@@ -25,6 +25,11 @@ linstor_tls_protocol: TLSv1.3
 # trusts only these, so another node's certificate from the same CA cannot take the satellite from its controller.
 # []: the satellite trusts the whole CA, and any certificate of it can connect (see README, Gotchas)
 linstor_tls_controller_certs: []
+# Copy the controller's certificate for the pin: the inventory host whose linstor_tls_cert a satellite reads (by
+# delegation) and the path it writes it to, which linstor_tls_controller_certs must list. The host named copies
+# nothing; "" = no copy (your PKI or another task puts the file there)
+linstor_tls_controller_cert_from: ""
+linstor_tls_controller_cert_copy: ""
 # Key and trust store password: "" = generated on the host once and kept root-only beside the stores
 linstor_tls_store_password: ""
 
