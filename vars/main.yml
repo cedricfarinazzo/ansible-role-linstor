@@ -18,6 +18,10 @@ linstor_data_dir: /var/lib/linstor
 linstor_controller_cert_copy_due: >-
   {{ linstor_satellite and linstor_tls_controller_cert_from | length > 0
      and linstor_tls_controller_cert_from != inventory_hostname }}
+# What the satellite's trust store holds: the pins, plus the replaced copy while it is kept
+linstor_satellite_pins: >-
+  {{ linstor_tls_controller_certs + ([linstor_tls_controller_cert_previous]
+     if linstor_controller_previous_state.stdout | default('') == 'keep' else []) }}
 linstor_satellite_trust: "{{ linstor_satellite_truststore if linstor_tls_controller_certs | length > 0 else linstor_truststore }}"
 
 linstor_packages: >-

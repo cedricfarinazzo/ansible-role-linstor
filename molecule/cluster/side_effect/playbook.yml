@@ -1,0 +1,151 @@
+---
+# The controller's certificate renewed without the satellite losing it: the satellite runs first and pins the copy
+# it replaces beside the new one, while the controller still presents the old; the controller's run switches to the
+# new one; the satellite's next run drops the old. Each run from the control node, as a user would.
+- name: Renew the controller's certificate for the same key, not yet loaded by LINSTOR
+  hosts: controllers
+  tasks:
+    - name: Sign a new certificate for the controller's key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cp /root/pki/node.crt /root/pki/node.old.crt
+        cd /root/ca
+        h={{ ansible_facts.hostname }}
+        openssl x509 -req -in "$h.csr" -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -extfile "$h.ext" \
+          -out /root/pki/node.crt
+        cp /root/pki/node.crt /root/pki/controller.crt
+        ! cmp -s /root/pki/node.crt /root/pki/node.old.crt
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+- name: Renewal, satellite first
+  hosts: controllers
+  gather_facts: false
+  vars:
+    # A fact cache: a run limited to the controller still reads the satellite's address for linstor_nodes
+    molecule_run: >-
+      ANSIBLE_CACHE_PLUGIN=ansible.builtin.jsonfile ANSIBLE_CACHE_PLUGIN_CONNECTION="{{ inventory_dir }}/../facts"
+      ansible-playbook -i "{{ inventory_dir }}" "{{ playbook_dir }}/../converge/playbook.yml"
+    molecule_satellite: "{{ groups['all'] | difference(groups['controllers']) | first }}"
+    # Both nodes ONLINE within 3 min, read on the controller
+    molecule_online: |
+      for i in $(seq 60); do
+        [ "$(linstor -m node list | jq '[.[0][] | select(.connection_status == "ONLINE")] | length')" = 2 ] && exit 0
+        sleep 3
+      done
+      echo "FAIL: $(linstor node list)"; exit 1
+    # The satellite trust store's controller certificates, by SHA-256 fingerprint, sorted
+    molecule_pins: >-
+      keytool -list -keystore /etc/linstor/ssl/satellite-trust.jks -storepass "$(cat /etc/linstor/ssl/store.password)"
+      | grep -A1 '^controller' | grep -oE '([0-9A-F]{2}:){31}[0-9A-F]{2}' | sort
+    molecule_fp: openssl x509 -noout -fingerprint -sha256 -in
+  tasks:
+    - name: Check mode on the satellite passes with a copy and a previous pin it has not written
+      ansible.builtin.shell: |
+        set -o pipefail
+        out=$({{ molecule_run }} --limit {{ molecule_satellite }} --check 2>&1) ||
+          { echo "$out" | tail -25; echo "FAIL: the check run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: false
+
+    - name: The satellite's run
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} --limit {{ molecule_satellite }} > "{{ inventory_dir }}/../renew-satellite.log" 2>&1 ||
+          { tail -25 "{{ inventory_dir }}/../renew-satellite.log"; echo "FAIL: the satellite run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Read the controller's old and renewed certificates
+      ansible.builtin.slurp:
+        src: /root/pki/{{ item }}
+      loop:
+        - node.old.crt
+        - node.crt
+      register: molecule_ctrl_pems
+
+    - name: Read the satellite's previous pin and copy
+      ansible.builtin.slurp:
+        src: /root/pki/{{ item }}
+      loop:
+        - controller.previous.crt
+        - controller.crt
+      register: molecule_sat_pems
+      delegate_to: "{{ molecule_satellite }}"
+
+    - name: The previous pin is the replaced copy, the copy the renewed certificate
+      ansible.builtin.assert:
+        that:
+          - molecule_sat_pems.results | map(attribute='content') | list
+            == molecule_ctrl_pems.results | map(attribute='content') | list
+
+    - name: The satellite's trust store pins both
+      ansible.builtin.shell: |
+        set -o pipefail
+        got=$({{ molecule_pins }} | paste -sd ' ')
+        want=$( ({{ molecule_fp }} /root/pki/controller.previous.crt; {{ molecule_fp }} /root/pki/controller.crt) |
+          cut -d= -f2 | sort | paste -sd ' ')
+        [ "$got" = "$want" ] || { echo "FAIL: pins: $got, want $want"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ molecule_satellite }}"
+      changed_when: false
+
+    # Without the previous pin the restarted satellite refuses the controller's old certificate: OFFLINE here
+    - name: The controller, still on its old certificate, gets the satellite back
+      ansible.builtin.shell: "{{ molecule_online }}"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The controller's run, onto the renewed certificate
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} --limit {{ inventory_hostname }} > "{{ inventory_dir }}/../renew-controller.log" 2>&1 ||
+          { tail -25 "{{ inventory_dir }}/../renew-controller.log"; echo "FAIL: the controller run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: The controller on its renewed certificate gets the satellite back
+      ansible.builtin.shell: "{{ molecule_online }}"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The satellite's next run drops the previous pin, then a rerun changes nothing
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} --limit {{ molecule_satellite }} > "{{ inventory_dir }}/../renew-drop.log" 2>&1 ||
+          { tail -25 "{{ inventory_dir }}/../renew-drop.log"; echo "FAIL: the satellite rerun failed"; exit 1; }
+        grep -qE 'changed=[1-9]' "{{ inventory_dir }}/../renew-drop.log" || { echo "FAIL: the drop changed nothing"; exit 1; }
+        out=$({{ molecule_run }} --limit {{ molecule_satellite }} 2>&1) || { echo "$out" | tail -25; exit 1; }
+        grep -qE 'changed=0 .*failed=0' <<<"$out" || { echo "$out" | grep -B2 -A2 'changed:'; echo "FAIL: not idempotent"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: The satellite pins the current certificate only
+      ansible.builtin.shell: |
+        set -o pipefail
+        [ ! -e /root/pki/controller.previous.crt ] || { echo "FAIL: previous pin left"; exit 1; }
+        got=$({{ molecule_pins }} | paste -sd ' ')
+        want=$({{ molecule_fp }} /root/pki/controller.crt | cut -d= -f2)
+        [ "$got" = "$want" ] || { echo "FAIL: pins: $got, want $want"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ molecule_satellite }}"
+      changed_when: false
+
+    - name: Both nodes online over the current pin alone
+      ansible.builtin.shell: "{{ molecule_online }}"
+      args:
+        executable: /bin/bash
+      changed_when: false

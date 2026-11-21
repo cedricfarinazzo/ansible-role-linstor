@@ -30,6 +30,10 @@ linstor_tls_controller_certs: []
 # nothing; "" = no copy (your PKI or another task puts the file there)
 linstor_tls_controller_cert_from: ""
 linstor_tls_controller_cert_copy: ""
+# Where a satellite keeps the copy it replaced, pinned beside the new one until the next run: the controller may
+# present the old certificate until its own run restarts it. "" = the old copy is dropped at once, and a renewal
+# cuts the satellite off its controller until the controller's run
+linstor_tls_controller_cert_previous: ""
 # Key and trust store password: "" = generated on the host once and kept root-only beside the stores
 linstor_tls_store_password: ""
 

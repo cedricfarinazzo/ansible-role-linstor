@@ -68,12 +68,12 @@
   ansible.builtin.shell: |
     set -euo pipefail
     umask 077
-    want=$( (cat {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
+    want=$( (cat {{ linstor_satellite_pins | map('quote') | join(' ') }}; printf %s "$P") | sha256sum | cut -d' ' -f1)
     if [ -s {{ linstor_satellite_truststore | quote }} ] &&
        [ "$(cat {{ linstor_satellite_trust_stamp | quote }} 2>/dev/null)" = "$want" ]; then echo unchanged; exit 0; fi
     t=$(mktemp -d); m=$(mktemp -d -p /dev/shm); trap 'rm -rf "$t" "$m"' EXIT
     i=0
-    for f in {{ linstor_tls_controller_certs | map('quote') | join(' ') }}; do
+    for f in {{ linstor_satellite_pins | map('quote') | join(' ') }}; do
       keytool -importcert -noprompt -alias "controller$i" -file "$f" \
         -keystore "$t/satellite-trust.jks" -storetype PKCS12 -storepass:env P > /dev/null
       issuer=$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$f" | sed 's/^issuer= *//')
