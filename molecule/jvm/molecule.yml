@@ -1,0 +1,73 @@
+---
+dependency:
+  # Into the scenario's ephemeral directory, put on the roles path below; never ~/.ansible
+  name: shell
+  command: >-
+    sh -c 'ansible-galaxy collection install -r "$MOLECULE_SCENARIO_DIRECTORY/collections.yml"
+    && ansible-galaxy role install --force -r "$MOLECULE_SCENARIO_DIRECTORY/requirements.yml"
+    -p "$MOLECULE_EPHEMERAL_DIRECTORY/roles"'
+driver:
+  name: docker
+platforms:
+  - name: linstor-jvm-${MOLECULE_DISTRO:-debian13}
+    hostname: linstor-node
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+provisioner:
+  name: ansible
+  env:
+    # Molecule does not add it: without it only a developer's ~/.ansible/roles hides the missing role
+    ANSIBLE_ROLES_PATH: ${MOLECULE_EPHEMERAL_DIRECTORY}/roles
+  playbooks:
+    prepare: prepare/playbook.yml
+    converge: converge/playbook.yml
+    verify: verify/playbook.yml
+    side_effect: side_effect/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+        # A combined node without TLS; each service gets its own heap cap, GC log and environment, the satellite
+        # also LS_KEEP_RES in the same drop-in; both restart on failure. Values differ per service so a swapped drop-in shows
+        linstor_satellite: true
+        linstor_controller: true
+        linstor_nodes:
+          - name: linstor-node
+            address: 127.0.0.1
+            type: combined
+        linstor_controller_java_opts: >-
+          -Xmx320m -XX:+UseSerialGC -XX:+CrashOnOutOfMemoryError
+          -Xlog:gc*:file=/var/log/linstor-controller/gc.log:time,uptime:filecount=3,filesize=5M
+        linstor_controller_environment:
+          MALLOC_ARENA_MAX: 2
+        linstor_satellite_java_opts: >-
+          -Xmx224m -XX:+UseSerialGC
+          -Xlog:gc*:file=/var/log/linstor-satellite/gc.log:time,uptime:filecount=3,filesize=5M
+        linstor_satellite_environment:
+          MALLOC_ARENA_MAX: "3"
+        linstor_satellite_keep_resources:
+          - res-kept
+        # Restarted after a crash, 2 s later; the unit's start limit bounds a loop
+        linstor_controller_restart: on-failure
+        linstor_satellite_restart: on-failure
+        linstor_restart_sec: 2
+verifier:
+  name: ansible
+scenario:
+  name: jvm
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - check
+    - converge
+    - verify
+    - idempotence
+    - side_effect
+    - destroy

@@ -191,5 +191,31 @@ bad "a resource definition property key with a trailing newline" '{"linstor_reso
 bad "a resource definition twice" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1}, {"name": "r", "resource_group": "g", "size_mib": 2}]}'
 bad "a resource definition with an unknown key" '{"linstor_resource_definitions": [{"name": "r", "resource_group": "g", "size_mib": 1, "replicas": 3}]}'
 
+J='-Xmx768m -XX:+UseSerialGC -Xlog:gc*:file=/var/log/linstor-controller/gc.log:time,uptime:filecount=3,filesize=5M'
+good "JVM options and environment of both services" "{\"linstor_controller\": true, \"linstor_controller_java_opts\": \"$J\", \"linstor_controller_environment\": {\"MALLOC_ARENA_MAX\": 2}, \"linstor_satellite_java_opts\": \"-Xmx384m\", \"linstor_satellite_environment\": {\"MALLOC_ARENA_MAX\": \"2\", \"TZ\": \"UTC\"}}"
+bad "JVM options with a newline" '{"linstor_controller_java_opts": "-Xmx1g\nExecStart=/bin/false"}'
+bad "JVM options with a trailing newline" '{"linstor_satellite_java_opts": "-Xmx1g\n"}'
+bad "JVM options with a quote" '{"linstor_controller_java_opts": "-Xmx1g\" -Dx=\"y"}'
+bad "JVM options with a single quote" "{\"linstor_satellite_java_opts\": \"-Dx='a b'\"}"
+bad "JVM options with a backslash" '{"linstor_controller_java_opts": "-Dx=a\\\\b"}'
+bad "JVM options with a systemd specifier" '{"linstor_satellite_java_opts": "-Dhost=%H"}'
+bad "JVM options as a list" '{"linstor_controller_java_opts": ["-Xmx1g"]}'
+bad "an environment as a list" '{"linstor_satellite_environment": ["MALLOC_ARENA_MAX=2"]}'
+bad "an environment name with a space" '{"linstor_controller_environment": {"MALLOC ARENA": "2"}}'
+bad "an environment name with a trailing newline" '{"linstor_satellite_environment": {"MALLOC_ARENA_MAX\n": "2"}}'
+bad "an environment value with a newline" '{"linstor_controller_environment": {"MALLOC_ARENA_MAX": "2\nExecStart=/bin/false"}}'
+bad "an environment value as a list" '{"linstor_satellite_environment": {"X": ["a"]}}'
+bad "JAVA_OPTS in an environment" '{"linstor_controller_environment": {"JAVA_OPTS": "-Xmx1g"}}'
+bad "LS_KEEP_RES in the satellite environment" '{"linstor_satellite_environment": {"LS_KEEP_RES": "r"}}'
+good "a restart policy for both services" '{"linstor_controller": true, "linstor_controller_restart": "on-failure", "linstor_satellite_restart": "always", "linstor_restart_sec": 30}'
+good "a restart policy alone, no JVM option" '{"linstor_satellite_restart": "on-abnormal"}'
+bad "an unknown restart policy" '{"linstor_satellite_restart": "sometimes"}'
+bad "a restart policy with a trailing newline" '{"linstor_controller_restart": "on-failure\n"}'
+bad "a restart policy with an embedded newline" '{"linstor_satellite_restart": "on-failure\nExecStart=/bin/false"}'
+bad "a restart policy as a boolean" '{"linstor_controller_restart": true}'
+bad "a restart delay of 0" '{"linstor_restart_sec": 0}'
+bad "a restart delay with a unit" '{"linstor_restart_sec": "10s"}'
+bad "a restart delay with a trailing newline" '{"linstor_restart_sec": "10\n"}'
+
 if [[ $fails -gt 0 ]]; then echo "$fails failed" >&2; exit 1; fi
 echo "all passed"

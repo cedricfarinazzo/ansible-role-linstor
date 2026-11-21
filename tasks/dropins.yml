@@ -1,0 +1,72 @@
+---
+# Each service's environment (JAVA_OPTS, LS_KEEP_RES, the user's) and restart policy by a drop-in, none when unset.
+# Before the masks are lifted, whose reload reads them for a first start. Check mode on a fresh host: no directory
+- name: Controller drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ linstor_controller_dropin | dirname }}"
+    state: directory
+    owner: root
+    mode: "0755"
+  register: linstor_controller_dropin_dir
+  when: linstor_controller and linstor_controller_dropin_due
+
+- name: Controller drop-in sets its environment and restart policy
+  ansible.builtin.template:
+    src: linstor-dropin.conf.j2
+    dest: "{{ linstor_controller_dropin }}"
+    owner: root
+    mode: "0644"
+  vars:
+    linstor_dropin_env: "{{ linstor_controller_dropin_env }}"
+    linstor_dropin_restart: "{{ linstor_controller_restart }}"
+  notify: Restart the controller on its drop-in
+  when:
+    - linstor_controller and linstor_controller_dropin_due
+    - not (ansible_check_mode and linstor_controller_dropin_dir is changed)
+
+- name: No controller drop-in without anything to set
+  ansible.builtin.file:
+    path: "{{ linstor_controller_dropin }}"
+    state: absent
+  notify: Restart the controller on its drop-in
+  when: not linstor_controller or not linstor_controller_dropin_due
+
+# Java refuses to start on an -Xlog file in a missing directory; the satellite makes its own only once running (the
+# controller's comes with its package)
+- name: Satellite log directory exists
+  ansible.builtin.file:
+    path: "{{ linstor_satellite_log_dir }}"
+    state: directory
+    owner: root
+    mode: "0755"
+  when: linstor_satellite
+
+- name: Satellite drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ linstor_satellite_dropin | dirname }}"
+    state: directory
+    owner: root
+    mode: "0755"
+  register: linstor_satellite_dropin_dir
+  when: linstor_satellite and linstor_satellite_dropin_due
+
+- name: Satellite drop-in sets its environment and restart policy
+  ansible.builtin.template:
+    src: linstor-dropin.conf.j2
+    dest: "{{ linstor_satellite_dropin }}"
+    owner: root
+    mode: "0644"
+  vars:
+    linstor_dropin_env: "{{ linstor_satellite_dropin_env }}"
+    linstor_dropin_restart: "{{ linstor_satellite_restart }}"
+  notify: Restart the satellite on its drop-in
+  when:
+    - linstor_satellite and linstor_satellite_dropin_due
+    - not (ansible_check_mode and linstor_satellite_dropin_dir is changed)
+
+- name: No satellite drop-in without anything to set
+  ansible.builtin.file:
+    path: "{{ linstor_satellite_dropin }}"
+    state: absent
+  notify: Restart the satellite on its drop-in
+  when: not linstor_satellite or not linstor_satellite_dropin_due

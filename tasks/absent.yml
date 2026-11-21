@@ -26,6 +26,6 @@
     state: absent
   loop: >-
     {{ [linstor_ssl_dir, linstor_satellite_conf, linstor_controller_conf, linstor_client_config,
-        linstor_ha_mount_unit, linstor_ha_promoter, linstor_satellite_dropin]
+        linstor_ha_mount_unit, linstor_ha_promoter, linstor_satellite_dropin, linstor_controller_dropin]
        + ([linstor_data_dir] if linstor_remove_data else []) }}
   notify: Reload systemd
