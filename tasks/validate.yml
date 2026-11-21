@@ -29,6 +29,7 @@
         and linstor_tls_controller_cert_previous is match('^/[A-Za-z0-9._/-]+\Z')
         and linstor_tls_controller_cert_previous != linstor_tls_controller_cert_copy
         and linstor_tls_controller_cert_previous not in linstor_tls_controller_certs)
+      - linstor_tls_controller_cert_previous_restart is boolean
       - linstor_tls_store_password is string
       - linstor_tls_store_password | length == 0 or linstor_tls_store_password is match('^[A-Za-z0-9._~+-]{12,}\Z')
       - linstor_satellite_bind_address is string and linstor_satellite_bind_address is match('^[0-9A-Fa-f:.]+\Z')
@@ -71,6 +72,7 @@
       linstor_tls_controller_cert_from an inventory host and linstor_tls_controller_cert_copy, both set or both '',
       the copy listed in linstor_tls_controller_certs on a host that copies; linstor_tls_controller_cert_previous ''
       or, with a copy, an absolute path that is neither the copy nor listed in linstor_tls_controller_certs;
+      linstor_tls_controller_cert_previous_restart a boolean;
       linstor_tls_store_password '' or 12+ of [A-Za-z0-9._~+-]; listen addresses IP literals; ports 1-65535, HTTP and HTTPS apart;
       linstor_controller_plain_connector, linstor_cluster (controller only) and linstor_remove_data booleans;
       linstor_client_config an absolute path; linstor_client_controllers '' or linstor[+ssl]:// URLs;

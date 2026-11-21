@@ -85,15 +85,7 @@
   register: linstor_controller_previous_pem
   when: linstor_controller_previous_state.stdout | default('') == 'keep'
 
-# The run after a renewal: the copy is current, the controller presents it
-- name: No previous pin once the copy is current
-  ansible.builtin.file:
-    path: "{{ linstor_tls_controller_cert_previous }}"
-    state: absent
-  when:
-    - linstor_controller_cert_copy_due and linstor_tls_controller_cert_previous | length > 0
-    - linstor_controller_previous_state.stdout | default('') != 'keep'
-
+# A previous pin no longer kept is deleted after the trust store is rebuilt (stores.yml)
 - name: Copy of the controller's certificate
   ansible.builtin.copy:
     content: "{{ linstor_controller_pem.content | b64decode }}"

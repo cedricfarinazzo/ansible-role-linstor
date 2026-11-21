@@ -34,6 +34,9 @@ linstor_tls_controller_cert_copy: ""
 # present the old certificate until its own run restarts it. "" = the old copy is dropped at once, and a renewal
 # cuts the satellite off its controller until the controller's run
 linstor_tls_controller_cert_previous: ""
+# The run that drops the previous pin restarts the satellite on the rebuilt trust store. false: one restart per
+# renewal; the running satellite keeps trusting the old certificate until its next start (see README)
+linstor_tls_controller_cert_previous_restart: true
 # Key and trust store password: "" = generated on the host once and kept root-only beside the stores
 linstor_tls_store_password: ""
 
