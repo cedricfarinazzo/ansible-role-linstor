@@ -39,7 +39,8 @@
 - name: Read the controller's certificate
   ansible.builtin.slurp:
     src: "{{ hostvars[linstor_tls_controller_cert_from].linstor_tls_cert }}"
-  delegate_to: "{{ linstor_tls_controller_cert_from }}"
+  # delegate_to is resolved before when: an empty name fails even a skipped task
+  delegate_to: "{{ linstor_tls_controller_cert_from or inventory_hostname }}"
   register: linstor_controller_pem
   when: linstor_controller_cert_copy_due
 

@@ -73,6 +73,8 @@ Public Ansible role `cedricfarinazzo.linstor` (Ansible Galaxy): LINSTOR satellit
 
 ## Gotchas
 
+- `delegate_to` is templated before `when`: an empty host name fails even a skipped task ("Empty hostname produced from delegate_to"). The copy of the controller's certificate falls back to `inventory_hostname`.
+
 - A host's postinst starts a new LINSTOR service at once: the controller's writes `linstor.toml` with H2 user and password `linstor` (`linstor-config create-db-file`), creates the database with them and serves plain HTTP on `[::]:3370`; the role's `linstor.toml` (no `[db]`, so no user) then fails `Wrong user name or password` at the next start. `install.yml` masks the units for the boot before the install, `config.yml` lifts the mask before `ha.yml` (which cannot disable a masked unit). Docker images' `policy-rc.d` (exit 101) hid it: the scenarios' prepare removes it and records each start's configuration in `/run/molecule-<unit>-starts`.
 - `[http] enabled = false` stops LINSTOR's whole REST server, HTTPS included: the plain listener is bound to loopback instead, and with HTTPS on it only answers 302 to HTTPS.
 - The controller's connector to satellites is not in `linstor.toml`: it is controller properties (`NetCom/SslConnector/*`), read at start, defaulting to password `linstor`. The role sets them over the API and restarts the controller; until then an SSL node stays OFFLINE ("The ServiceName of the default TCP connector is not valid").
