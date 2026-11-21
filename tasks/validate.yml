@@ -89,10 +89,16 @@
         | map(attribute='value') | map('string') | reject('match', linstor_env_value_re) | list | length == 0
       - "'JAVA_OPTS' not in linstor_controller_environment and 'JAVA_OPTS' not in linstor_satellite_environment"
       - "'LS_KEEP_RES' not in linstor_satellite_environment"
+      - linstor_controller_restart is string and linstor_satellite_restart is string
+      - linstor_controller_restart in [''] + linstor_restart_policies
+      - linstor_satellite_restart in [''] + linstor_restart_policies
+      - linstor_restart_sec | string is match('^[0-9]{1,4}\Z') and linstor_restart_sec | int in range(1, 3601)
     fail_msg: >-
       linstor_controller_java_opts and linstor_satellite_java_opts strings, linstor_controller_environment and
       linstor_satellite_environment mappings of NAME ([A-Za-z_][A-Za-z0-9_]*) to a string or number, none of them
-      with a quote, backslash, % or control character; JAVA_OPTS and LS_KEEP_RES are set by the role, not in them
+      with a quote, backslash, % or control character; JAVA_OPTS and LS_KEEP_RES are set by the role, not in them;
+      linstor_controller_restart and linstor_satellite_restart '' or a systemd Restart= value
+      ({{ linstor_restart_policies | join(', ') }}); linstor_restart_sec 1-3600 seconds
     quiet: true
 
 # Under HA every controller reads the same database: the connector's store password is in it, and the embedded

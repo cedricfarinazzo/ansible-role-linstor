@@ -39,6 +39,11 @@ linstor_controller_java_opts: ""
 linstor_controller_environment: {}
 linstor_satellite_java_opts: ""
 linstor_satellite_environment: {}
+# systemd Restart= of each service (LINSTOR's units ship Restart=no), e.g. on-failure: "" = the unit's own. The unit's
+# StartLimitBurst bounds a crash loop; RestartSec below. Under controller HA drbd-reactor restarts the controller
+linstor_controller_restart: ""
+linstor_satellite_restart: ""
+linstor_restart_sec: 10
 
 # Satellite listener: 3366 plain, 3367 SSL by LINSTOR's convention
 linstor_satellite_bind_address: "::0"

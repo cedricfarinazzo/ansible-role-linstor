@@ -33,7 +33,7 @@ provisioner:
       all:
         ansible_become: false
         # A combined node without TLS; each service gets its own heap cap, GC log and environment, the satellite
-        # also LS_KEEP_RES in the same drop-in. Values differ per service so a swapped drop-in shows
+        # also LS_KEEP_RES in the same drop-in; both restart on failure. Values differ per service so a swapped drop-in shows
         linstor_satellite: true
         linstor_controller: true
         linstor_nodes:
@@ -52,6 +52,10 @@ provisioner:
           MALLOC_ARENA_MAX: "3"
         linstor_satellite_keep_resources:
           - res-kept
+        # Restarted after a crash, 2 s later; the unit's start limit bounds a loop
+        linstor_controller_restart: on-failure
+        linstor_satellite_restart: on-failure
+        linstor_restart_sec: 2
 verifier:
   name: ansible
 scenario:

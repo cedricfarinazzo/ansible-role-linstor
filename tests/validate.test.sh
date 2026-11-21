@@ -207,6 +207,15 @@ bad "an environment value with a newline" '{"linstor_controller_environment": {"
 bad "an environment value as a list" '{"linstor_satellite_environment": {"X": ["a"]}}'
 bad "JAVA_OPTS in an environment" '{"linstor_controller_environment": {"JAVA_OPTS": "-Xmx1g"}}'
 bad "LS_KEEP_RES in the satellite environment" '{"linstor_satellite_environment": {"LS_KEEP_RES": "r"}}'
+good "a restart policy for both services" '{"linstor_controller": true, "linstor_controller_restart": "on-failure", "linstor_satellite_restart": "always", "linstor_restart_sec": 30}'
+good "a restart policy alone, no JVM option" '{"linstor_satellite_restart": "on-abnormal"}'
+bad "an unknown restart policy" '{"linstor_satellite_restart": "sometimes"}'
+bad "a restart policy with a trailing newline" '{"linstor_controller_restart": "on-failure\n"}'
+bad "a restart policy with an embedded newline" '{"linstor_satellite_restart": "on-failure\nExecStart=/bin/false"}'
+bad "a restart policy as a boolean" '{"linstor_controller_restart": true}'
+bad "a restart delay of 0" '{"linstor_restart_sec": 0}'
+bad "a restart delay with a unit" '{"linstor_restart_sec": "10s"}'
+bad "a restart delay with a trailing newline" '{"linstor_restart_sec": "10\n"}'
 
 if [[ $fails -gt 0 ]]; then echo "$fails failed" >&2; exit 1; fi
 echo "all passed"

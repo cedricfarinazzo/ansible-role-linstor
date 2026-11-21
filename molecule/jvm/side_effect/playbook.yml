@@ -1,5 +1,5 @@
 ---
-# A bad value stops the role before any change; emptied options remove each drop-in's lines, then the drop-in itself,
+# A bad value stops the role before any change; emptied options and restart policies remove each drop-in's lines, then the drop-in itself,
 # and the services run with LINSTOR's defaults again.
 - name: Run the role again from the control node, as a user would
   hosts: all
@@ -12,6 +12,8 @@
       linstor_controller_environment: {}
       linstor_satellite_java_opts: ""
       linstor_satellite_environment: {}
+      linstor_controller_restart: ""
+      linstor_satellite_restart: ""
   tasks:
     - name: A JVM option with a newline fails its check, the drop-ins and services untouched
       ansible.builtin.shell: |
@@ -52,6 +54,7 @@
           pid=$(systemctl show -P MainPID ${u%%:*}); [ "$pid" -gt 0 ] || fail "${u%%:*} not running"
           [ "$(tr '\0' ' ' < /proc/$pid/cmdline | grep -o -- '-Xmx[^ ]*' | tail -1)" != "${u#*:}" ] || fail "${u%%:*} kept its cap"
           if tr '\0' '\n' < /proc/$pid/environ | grep -q '^MALLOC_ARENA_MAX='; then fail "${u%%:*} kept MALLOC_ARENA_MAX"; fi
+          [ "$(systemctl show -P Restart ${u%%:*})" = no ] || fail "${u%%:*} kept its restart policy"
         done
       args:
         executable: /bin/bash

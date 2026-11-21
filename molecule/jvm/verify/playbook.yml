@@ -1,5 +1,5 @@
 ---
-# Each service's drop-in holds its own JVM options and environment, and the running JVM has them.
+# Each service's drop-in holds its own JVM options, environment and restart policy, and the running JVM has them.
 # Each check line ends in "|| fail": a shell task's status is its last command's only.
 - name: The package never started LINSTOR with its own defaults
   hosts: all
@@ -38,11 +38,15 @@
           [Service]
           Environment="JAVA_OPTS={{ linstor_controller_java_opts }}"
           Environment=MALLOC_ARENA_MAX=2
+          Restart=on-failure
+          RestartSec=2s
         S: |-
           [Service]
           Environment="JAVA_OPTS={{ linstor_satellite_java_opts }}"
           Environment=LS_KEEP_RES=res-kept
           Environment=MALLOC_ARENA_MAX=3
+          Restart=on-failure
+          RestartSec=2s
       changed_when: false
 
     # LINSTOR's start script puts JAVA_OPTS after its own -Xmx: the last one is the JVM's
@@ -71,12 +75,36 @@
         executable: /bin/bash
       changed_when: false
 
+    # SIGKILL is a failure for Restart=on-failure: systemd starts a new JVM, the node comes back online
+    - name: Each JVM killed with SIGKILL is restarted by systemd
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        for u in linstor-controller linstor-satellite; do
+          [ "$(systemctl show -P Restart $u)" = on-failure ] || fail "$u Restart: $(systemctl show -P Restart $u)"
+          old=$(systemctl show -P MainPID $u); [ "$old" -gt 0 ] || fail "$u not running"
+          kill -9 "$old"
+          for i in $(seq 60); do
+            new=$(systemctl show -P MainPID $u)
+            [ "$new" -gt 0 ] && [ "$new" != "$old" ] && [ "$(systemctl is-active $u)" = active ] && break
+            sleep 1
+          done
+          [ "$new" -gt 0 ] && [ "$new" != "$old" ] || fail "$u not restarted after kill -9: $(systemctl is-active $u)"
+          [ "$(systemctl show -P NRestarts $u)" -ge 1 ] || fail "$u NRestarts $(systemctl show -P NRestarts $u)"
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: LINSTOR works under the caps, the node online
       ansible.builtin.shell: |
         set -o pipefail
-        n=$(linstor -m node list) || { echo "FAIL: linstor node list"; exit 1; }
-        jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' <<<"$n" > /dev/null ||
-          { echo "FAIL: node: $n"; exit 1; }
+        for i in $(seq 36); do
+          n=$(linstor -m node list 2>&1) &&
+            jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' <<<"$n" > /dev/null && exit 0
+          sleep 5
+        done
+        echo "FAIL: node: $n"; exit 1
       args:
         executable: /bin/bash
       changed_when: false

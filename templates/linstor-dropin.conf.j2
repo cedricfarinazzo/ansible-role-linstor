@@ -7,3 +7,7 @@ Environment="{{ k }}={{ v }}"
 Environment={{ k }}={{ v }}
 {% endif %}
 {% endfor %}
+{% if linstor_dropin_restart | length > 0 %}
+Restart={{ linstor_dropin_restart }}
+RestartSec={{ linstor_restart_sec }}s
+{% endif %}
