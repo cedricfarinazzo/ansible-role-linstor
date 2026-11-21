@@ -1,9 +1,12 @@
 ---
 # No source of its own: LINSTOR comes from the sources already configured (LINBIT's, a mirror, Proxmox VE).
+# Check mode reports a stale cache as changed without refreshing it: only a real refresh counts.
 - name: Refresh the package lists
   ansible.builtin.apt:
     update_cache: true
     cache_valid_time: 3600
+  register: linstor_cache_refresh
+  changed_when: linstor_cache_refresh.cache_updated and not ansible_check_mode
 
 - name: Read the package candidates
   ansible.builtin.command: apt-cache policy {{ linstor_packages | join(' ') }}
