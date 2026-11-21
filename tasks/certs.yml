@@ -35,7 +35,35 @@
       {{ linstor_cert_check.stdout | default('') }}. Nothing was changed.
     quiet: true
 
-# A pinned controller certificate that is wrong would leave the satellite refusing its own controller
+# Its own certificate checked first; the copy is checked with the other pins below
+- name: Read the controller's certificate
+  ansible.builtin.slurp:
+    src: "{{ hostvars[linstor_tls_controller_cert_from].linstor_tls_cert }}"
+  delegate_to: "{{ linstor_tls_controller_cert_from }}"
+  register: linstor_controller_pem
+  when: linstor_controller_cert_copy_due
+
+- name: Directory of the controller's certificate copy
+  ansible.builtin.file:
+    path: "{{ linstor_tls_controller_cert_copy | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: linstor_controller_cert_copy_due
+
+- name: Copy of the controller's certificate
+  ansible.builtin.copy:
+    content: "{{ linstor_controller_pem.content | b64decode }}"
+    dest: "{{ linstor_tls_controller_cert_copy }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: linstor_controller_pem_copy
+  when: linstor_controller_cert_copy_due
+
+# A pinned controller certificate that is wrong would leave the satellite refusing its own controller. Check mode
+# writes no copy: a copy it would change is not on the host yet
 - name: Check the controller certificates the satellite pins
   ansible.builtin.shell: |
     set -uo pipefail
@@ -47,7 +75,9 @@
       { echo "not signed by the CA: $f"; exit 1; }
   args:
     executable: /bin/bash
-  loop: "{{ linstor_tls_controller_certs }}"
+  loop: >-
+    {{ linstor_tls_controller_certs | reject('equalto', linstor_tls_controller_cert_copy) | list
+       if ansible_check_mode and linstor_controller_pem_copy is changed else linstor_tls_controller_certs }}
   register: linstor_pin_check
   changed_when: false
   failed_when: false

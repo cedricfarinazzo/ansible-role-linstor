@@ -101,12 +101,16 @@ linstor_tls_key: ""             # PEM, no passphrase; stays where you put it
 linstor_tls_ca: ""              # PEM, the CA every node and client certificate chains to
 linstor_tls_protocol: TLSv1.3
 linstor_tls_controller_certs: []   # satellite: PEM certificates of the controller(s) it accepts; [] = the whole CA
+linstor_tls_controller_cert_from: ""   # inventory host whose linstor_tls_cert a satellite copies for its pin
+linstor_tls_controller_cert_copy: ""   # where the copy goes; must be listed in linstor_tls_controller_certs
 linstor_tls_store_password: ""  # "" = generated on the host into /etc/linstor/ssl/store.password (0600)
 ```
 
 The PEM files are yours: the role reads them and never moves or rewrites them, so other services (DRBD's kernel TLS handshake daemon, for example) can use the same files. Renew a certificate in place and rerun the role: it rebuilds the stores and restarts LINSTOR.
 
 `linstor_tls_controller_certs` closes the satellite's weak spot (see [Security notes](#️-security-notes)): the satellite then trusts exactly the listed certificates (a combined node lists its own), kept in `/etc/linstor/ssl/satellite-trust.jks`, so no other certificate of your CA can connect to it. List the certificate files of the controller(s) on every satellite host (a public certificate, copied by your PKI or by Ansible). The trust store also holds, per pinned certificate, a throwaway self-signed anchor named like its issuer, with no usable key (it lives in tmpfs for the `keytool` calls and is deleted at once): the controller picks its client certificate by the issuer names the satellite lists, and sends none without it. A certificate of your CA, or of any other key under the CA's name, cannot chain to the anchor.
+
+To let Ansible copy it, set `linstor_tls_controller_cert_from` to the controller's inventory name and `linstor_tls_controller_cert_copy` to a path listed in `linstor_tls_controller_certs`: every other satellite reads the controller's `linstor_tls_cert` by delegation and writes it there (root, 0644) after its own certificate's check and before the pin check; the controller itself copies nothing (list its own `linstor_tls_cert` on it). Run the controller host first in the same play (`serial: 1`, controller first), so a fresh controller's certificate exists. In check mode a copy not written yet is left out of the pin check.
 
 **Renewing the controller's certificate** without an outage: list the old and the new certificate on every satellite (both paths in `linstor_tls_controller_certs`) and rerun the role there; then renew on the controller and rerun it; then drop the old file from the list and rerun the satellites. Renewing the controller first leaves its satellites refusing it (nodes OFFLINE) until their pin lists the new certificate.
 

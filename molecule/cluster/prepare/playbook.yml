@@ -132,15 +132,12 @@
       loop_control:
         label: "{{ item.dest }}"
 
-    # What a satellite pins: the controller's certificate, on every node (the controller's own satellite too)
-    - name: Read the controller's certificate
-      ansible.builtin.slurp:
-        src: /root/pki/node.crt
-      register: molecule_controller_cert
-      delegate_to: "{{ molecule_controller }}"
-
-    - name: The controller's certificate on the node
+    # What the controller's own satellite pins; the other node gets its copy from the role
+    # (linstor_tls_controller_cert_from)
+    - name: The controller's certificate pinned on the controller
       ansible.builtin.copy:
+        src: /root/pki/node.crt
+        remote_src: true
         dest: /root/pki/controller.crt
-        content: "{{ molecule_controller_cert.content | b64decode }}"
         mode: "0600"
+      when: inventory_hostname == molecule_controller

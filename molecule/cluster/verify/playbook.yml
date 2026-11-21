@@ -21,6 +21,28 @@
         executable: /bin/bash
       changed_when: false
 
+- name: The satellite's copy of the controller's certificate
+  hosts: all:!controllers
+  gather_facts: false
+  tasks:
+    - name: Read the controller's certificate
+      ansible.builtin.slurp:
+        src: /root/pki/node.crt
+      delegate_to: "{{ molecule_controller }}"
+      register: molecule_ctrl_cert
+
+    - name: Read the copy and its mode
+      ansible.builtin.stat:
+        path: /root/pki/controller.crt
+      register: molecule_copy
+
+    - name: The copy is the controller's certificate, root 0644
+      ansible.builtin.assert:
+        that:
+          - molecule_copy.stat.checksum == (molecule_ctrl_cert.content | b64decode | hash('sha1'))
+          - molecule_copy.stat.mode == '0644' and molecule_copy.stat.pw_name == 'root'
+        fail_msg: "copy {{ molecule_copy.stat }}"
+
 - name: Verify the cluster from the controller
   hosts: controllers
   gather_facts: false
