@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Service]
+{% for k, v in linstor_dropin_env | dictsort %}
+{% if ' ' in v | string %}
+Environment="{{ k }}={{ v }}"
+{% else %}
+Environment={{ k }}={{ v }}
+{% endif %}
+{% endfor %}

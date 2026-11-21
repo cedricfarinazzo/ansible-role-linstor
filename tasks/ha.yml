@@ -34,27 +34,3 @@
     enabled: false
   ignore_errors: "{{ ansible_check_mode }}"
   when: linstor_ha_controller
-
-- name: Satellite drop-in directory exists
-  ansible.builtin.file:
-    path: "{{ linstor_satellite_dropin | dirname }}"
-    state: directory
-    owner: root
-    mode: "0755"
-  when: linstor_satellite and linstor_satellite_keep_resources | length > 0
-
-- name: Satellite keeps the listed resources
-  ansible.builtin.template:
-    src: linstor-satellite-dropin.conf.j2
-    dest: "{{ linstor_satellite_dropin }}"
-    owner: root
-    mode: "0644"
-  notify: Restart the satellite on its drop-in
-  when: linstor_satellite and linstor_satellite_keep_resources | length > 0
-
-- name: No satellite drop-in without resources to keep
-  ansible.builtin.file:
-    path: "{{ linstor_satellite_dropin }}"
-    state: absent
-  notify: Restart the satellite on its drop-in
-  when: linstor_satellite_keep_resources | length == 0 or not linstor_satellite

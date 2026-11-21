@@ -1,0 +1,94 @@
+---
+# A bad value stops the role before any change; emptied options remove each drop-in's lines, then the drop-in itself,
+# and the services run with LINSTOR's defaults again.
+- name: Run the role again from the control node, as a user would
+  hosts: all
+  gather_facts: false
+  vars:
+    molecule_run: >-
+      ansible-playbook -i "{{ inventory_dir }}" "{{ playbook_dir }}/../converge/playbook.yml"
+    molecule_empty:
+      linstor_controller_java_opts: ""
+      linstor_controller_environment: {}
+      linstor_satellite_java_opts: ""
+      linstor_satellite_environment: {}
+  tasks:
+    - name: A JVM option with a newline fails its check, the drop-ins and services untouched
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        state() { sha256sum /etc/systemd/system/linstor-*.service.d/50-linstor-role.conf
+          systemctl show -P MainPID linstor-controller linstor-satellite; }
+        before=$(state)
+        if out=$({{ molecule_run }} -e '{"linstor_controller_java_opts": "-Xmx1g\nExecStart=/bin/false"}' 2>&1); then
+          fail "the run accepted a newline"
+        fi
+        grep -q 'JAVA_OPTS and LS_KEEP_RES are set by the role' <<<"$out" || { echo "$out" | tail -15; fail "not stopped by the check"; }
+        [ "$(state)" = "$before" ] || fail "a drop-in or a service changed"
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Emptied JVM options and environment
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} -e '{{ molecule_empty | to_json }}' > "{{ inventory_dir }}/../empty.log" 2>&1 ||
+          { tail -25 "{{ inventory_dir }}/../empty.log"; echo "FAIL: the run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: No controller drop-in, the satellite's keeps LS_KEEP_RES only, both JVMs on LINSTOR's defaults
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        d=/etc/systemd/system
+        if [ -e $d/linstor-controller.service.d/50-linstor-role.conf ]; then fail "the controller drop-in is left"; fi
+        s=$(grep -v '^#' $d/linstor-satellite.service.d/50-linstor-role.conf) || fail "no satellite drop-in"
+        [ "$s" = "$(printf '[Service]\nEnvironment=LS_KEEP_RES=res-kept')" ] || fail "satellite drop-in: $s"
+        for u in linstor-controller:-Xmx320m linstor-satellite:-Xmx224m; do
+          pid=$(systemctl show -P MainPID ${u%%:*}); [ "$pid" -gt 0 ] || fail "${u%%:*} not running"
+          [ "$(tr '\0' ' ' < /proc/$pid/cmdline | grep -o -- '-Xmx[^ ]*' | tail -1)" != "${u#*:}" ] || fail "${u%%:*} kept its cap"
+          if tr '\0' '\n' < /proc/$pid/environ | grep -q '^MALLOC_ARENA_MAX='; then fail "${u%%:*} kept MALLOC_ARENA_MAX"; fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The emptied run again changes nothing
+      ansible.builtin.shell: |
+        set -o pipefail
+        out=$({{ molecule_run }} -e '{{ molecule_empty | to_json }}' 2>&1) || { echo "$out" | tail -25; echo "FAIL: the run failed"; exit 1; }
+        grep -qE 'changed=0 .*failed=0' <<<"$out" || { echo "$out" | grep -B2 -A2 'changed:'; echo "FAIL: the rerun changed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Nothing left to set either
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} -e '{{ molecule_empty | combine({"linstor_satellite_keep_resources": []}) | to_json }}' \
+          > "{{ inventory_dir }}/../none.log" 2>&1 || { tail -25 "{{ inventory_dir }}/../none.log"; echo "FAIL: the run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: No satellite drop-in, the satellite restarted without LS_KEEP_RES, the node online
+      ansible.builtin.shell: |
+        set -o pipefail
+        fail() { echo "FAIL: $*"; exit 1; }
+        if [ -e /etc/systemd/system/linstor-satellite.service.d/50-linstor-role.conf ]; then fail "the satellite drop-in is left"; fi
+        pid=$(systemctl show -P MainPID linstor-satellite); [ "$pid" -gt 0 ] || fail "satellite not running"
+        if tr '\0' '\n' < /proc/$pid/environ | grep -q '^LS_KEEP_RES='; then fail "the satellite kept LS_KEEP_RES"; fi
+        for i in $(seq 36); do
+          linstor -m node list | jq -e '.[0][] | select(.name == "linstor-node" and .connection_status == "ONLINE")' > /dev/null && exit 0
+          sleep 5
+        done
+        fail "node not online: $(linstor node list)"
+      args:
+        executable: /bin/bash
+      changed_when: false

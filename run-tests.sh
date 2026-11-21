@@ -13,6 +13,7 @@ show_usage() {
     echo "cluster (a combined node and a satellite in two containers, mutual TLS across the network),"
     echo "plain (a combined node without TLS: plain satellite and REST API, no store),"
     echo "ha (three nodes: one controller, then controller HA by drbd-reactor on two; quorum group, tiebreaker, pins),"
+    echo "jvm (a combined node with JVM options and environment per service, then emptied: drop-ins written and removed),"
     echo "failure (a missing certificate, a key that does not match, a certificate from another CA, no package source: the role must stop)."
     echo "Several distributions, or 'all', run in parallel; each writes .molecule-logs/<distro>.log."
     echo
@@ -26,6 +27,7 @@ show_usage() {
     echo "  $0 -s cluster debian13   # two nodes"
     echo "  $0 -s plain debian13     # without TLS"
     echo "  $0 -s ha debian13        # three nodes, controller HA"
+    echo "  $0 -s jvm debian13       # JVM options and environment per service"
 }
 
 if [[ ${1:-} == -h || ${1:-} == --help ]]; then show_usage; exit 0; fi

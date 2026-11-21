@@ -41,6 +41,19 @@ linstor_controller_here: >-
 linstor_ha_mount_unit: /etc/systemd/system/var-lib-linstor.mount
 linstor_ha_promoter: /etc/drbd-reactor.d/{{ linstor_controller_ha_resource }}.toml
 linstor_satellite_dropin: /etc/systemd/system/linstor-satellite.service.d/50-linstor-role.conf
+linstor_controller_dropin: /etc/systemd/system/linstor-controller.service.d/50-linstor-role.conf
+linstor_satellite_log_dir: /var/log/linstor-satellite
+# Environment each service's drop-in sets; {} = no drop-in
+linstor_controller_dropin_env: >-
+  {{ ({'JAVA_OPTS': linstor_controller_java_opts} if linstor_controller_java_opts | length > 0 else {})
+     | combine(linstor_controller_environment) }}
+linstor_satellite_dropin_env: >-
+  {{ ({'LS_KEEP_RES': linstor_satellite_keep_resources | join('|')} if linstor_satellite_keep_resources | length > 0 else {})
+     | combine({'JAVA_OPTS': linstor_satellite_java_opts} if linstor_satellite_java_opts | length > 0 else {})
+     | combine(linstor_satellite_environment) }}
+# A systemd Environment= value that is also safe in LINSTOR's start script: no quote, backslash, % (a systemd
+# specifier) or control character
+linstor_env_value_re: '^[^"''\\%\x00-\x1f\x7f]*\Z'
 
 linstor_store_pass: "{{ linstor_tls_store_password or (linstor_password_read.content | default('') | b64decode | trim) }}"
 linstor_api: >-

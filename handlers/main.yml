@@ -31,3 +31,17 @@
     state: restarted
     daemon_reload: true
   when: linstor_satellite
+
+- name: Restart the controller on its drop-in
+  ansible.builtin.systemd_service:
+    name: linstor-controller
+    state: restarted
+    daemon_reload: true
+  when: linstor_controller and not linstor_ha_controller
+
+# Under HA only where drbd-reactor started it; a standby reads the drop-in at its next start
+- name: Restart the active HA controller on its drop-in  # noqa: command-instead-of-module (try-restart: no module has it)
+  ansible.builtin.shell: systemctl daemon-reload && systemctl try-restart linstor-controller.service
+  listen: Restart the controller on its drop-in
+  changed_when: true
+  when: linstor_ha_controller

@@ -1,0 +1,7 @@
+---
+# Test-only role: its LINBIT source (fingerprint-pinned key) is where LINSTOR comes from in the scenarios.
+roles:
+  - name: cedricfarinazzo.drbd
+    src: https://github.com/cedricfarinazzo/ansible-role-drbd
+    scm: git
+    version: 2.2.1
